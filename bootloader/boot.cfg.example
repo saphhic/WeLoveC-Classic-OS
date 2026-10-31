@@ -1,0 +1,16 @@
+# Written by [@saphhic](https://github.com/saphhic)
+# Date: October 30th 2026
+# Description: Example UEFI bootloader configuration with a kernel, timeout, and user-space image.
+
+# Copy as \EFI\WELOVEC\boot.cfg on a FAT EFI System Partition.
+# `default` is a zero-based index among all configured entries.
+timeout=5
+default=0
+
+title=WeLoveC Classic
+kernel=\EFI\WELOVEC\kernel.elf
+cmdline=loglevel=4
+fat32=\EFI\WELOVEC\userspace.img
+
+# Add another title/kernel pair to create another menu entry.
+# initrd and cmdline may be omitted for any entry.

@@ -1,0 +1,5 @@
+# Written by [@saphhic](https://github.com/saphhic)
+# Date: October 30th 2026
+# Description: Tells Git which bootloader build outputs to ignore.
+
+/build/
