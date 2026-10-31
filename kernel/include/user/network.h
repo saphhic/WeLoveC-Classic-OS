@@ -73,14 +73,16 @@ static inline int64_t welovec_dns_lookup_ipv6(const char *hostname,
                                  (uint64_t)(uintptr_t)address_out);
 }
 
-/* Connects to IPv4:port. The returned socket handle belongs to this process. */
+/* Connects to IPv4:port. The returned socket handle belongs to this process;
+   failures return negative errno values such as -EHOSTUNREACH, -EAGAIN,
+   -ECONNREFUSED, -ETIMEDOUT, or -EIO. */
 static inline int64_t welovec_tcp_connect_ipv4(const uint8_t address[4],
                                                uint16_t port) {
     return welovec_user_syscall2(WELOVEC_SYS_NET_TCP_CONNECT,
                                  (uint64_t)(uintptr_t)address, port);
 }
 
-/* Connects to IPv6:port. The returned socket handle belongs to this process. */
+/* Connects to IPv6:port with the same socket and error convention as IPv4. */
 static inline int64_t welovec_tcp_connect_ipv6(const uint8_t address[16],
                                                uint16_t port) {
     return welovec_user_syscall2(WELOVEC_SYS_NET_TCP_CONNECT_IPV6,

@@ -47,6 +47,12 @@ static uint64_t gSurfacePixelsAllocated;
 static bool gVirtualFramebufferActive;
 static constexpr uint64_t kMaximumWindowSurfacePixels = UINT64_C(4096) * 2160;
 static constexpr uint64_t kMaximumTotalWindowSurfacePixels = UINT64_C(64) * 1024 * 1024;
+static welovec::x86_64::mm::IrqSpinLock gFrameLock;
+static uint32_t *gFrameBuffer;
+static bool gFrameBufferAllocationFailed;
+static uint64_t gFrameOwner;
+static int32_t gFrameX, gFrameY;
+static uint32_t gFrameWidth, gFrameHeight;
 
 static void copy_forward_bytes(uint8_t *destination, const uint8_t *source,
                                uint64_t bytes) {
@@ -303,6 +309,134 @@ uint64_t framebuffer_surface_generation(
     const uint64_t generation = surface->generation;
     gSurfaceLock.unlock_irqrestore(irq);
     return generation;
+}
+
+static void copy_framebuffer_region(uint32_t *destination,
+                                    const uint32_t *source,
+                                    int32_t x, int32_t y,
+                                    uint32_t region_width,
+                                    uint32_t region_height) {
+    if (!destination || !source || !region_width || !region_height) return;
+    const uint64_t row_bytes = static_cast<uint64_t>(region_width) *
+                              sizeof(uint32_t);
+    for (uint32_t row = 0; row < region_height; ++row) {
+        auto *out = reinterpret_cast<uint8_t *>(destination) +
+            static_cast<uint64_t>(y + static_cast<int32_t>(row)) * pitch +
+            static_cast<uint64_t>(x) * sizeof(uint32_t);
+        const auto *in = reinterpret_cast<const uint8_t *>(source) +
+            static_cast<uint64_t>(y + static_cast<int32_t>(row)) * pitch +
+            static_cast<uint64_t>(x) * sizeof(uint32_t);
+        copy_forward_bytes(out, in, row_bytes);
+    }
+}
+
+bool framebuffer_frame_begin(uint64_t owner, int32_t x, int32_t y,
+                             int32_t frame_width, int32_t frame_height) {
+    if (!owner || !framebuffer_available() || frame_width <= 0 ||
+        frame_height <= 0)
+        return false;
+    const int64_t right = static_cast<int64_t>(x) + frame_width;
+    const int64_t bottom = static_cast<int64_t>(y) + frame_height;
+    const int x0 = x < 0 ? 0 : x;
+    const int y0 = y < 0 ? 0 : y;
+    const int x1 = right > width ? static_cast<int>(width)
+                                 : static_cast<int>(right);
+    const int y1 = bottom > height ? static_cast<int>(height)
+                                   : static_cast<int>(bottom);
+    if (x0 >= x1 || y0 >= y1) return false;
+
+    if (!gFrameBuffer) {
+        if (gFrameBufferAllocationFailed) return false;
+        const uint64_t buffer_bytes = static_cast<uint64_t>(pitch) * height;
+        const uint64_t buffer_pixels = buffer_bytes / sizeof(uint32_t);
+        if (!buffer_bytes || (buffer_bytes % sizeof(uint32_t)) != 0 ||
+            buffer_pixels > kMaximumWindowSurfacePixels ||
+            !surface_backing_available(buffer_pixels)) {
+            gFrameBufferAllocationFailed = true;
+            return false;
+        }
+        auto *candidate = static_cast<uint32_t *>(
+            welovec::memory::heap::allocate(buffer_bytes));
+        if (!candidate) {
+            gFrameBufferAllocationFailed = true;
+            return false;
+        }
+
+        const uint64_t allocation_irq = gFrameLock.lock_irqsave();
+        const bool discard_candidate = gFrameBuffer != nullptr;
+        if (!discard_candidate) gFrameBuffer = candidate;
+        gFrameLock.unlock_irqrestore(allocation_irq);
+        if (discard_candidate)
+            (void)welovec::memory::heap::deallocate(candidate);
+    }
+
+    const uint64_t irq = gFrameLock.lock_irqsave();
+    if (gFrameOwner) {
+        gFrameLock.unlock_irqrestore(irq);
+        return false;
+    }
+    copy_framebuffer_region(gFrameBuffer, framebuffer, x0, y0,
+                            static_cast<uint32_t>(x1 - x0),
+                            static_cast<uint32_t>(y1 - y0));
+    gFrameX = x0;
+    gFrameY = y0;
+    gFrameWidth = static_cast<uint32_t>(x1 - x0);
+    gFrameHeight = static_cast<uint32_t>(y1 - y0);
+    gFrameOwner = owner;
+    gFrameLock.unlock_irqrestore(irq);
+    return true;
+}
+
+bool framebuffer_frame_end(uint64_t owner) {
+    if (!owner) return false;
+    const uint64_t irq = gFrameLock.lock_irqsave();
+    if (gFrameOwner != owner || !gFrameBuffer) {
+        gFrameLock.unlock_irqrestore(irq);
+        return false;
+    }
+    copy_framebuffer_region(framebuffer, gFrameBuffer, gFrameX, gFrameY,
+                            gFrameWidth, gFrameHeight);
+    gFrameOwner = 0;
+    gFrameX = gFrameY = 0;
+    gFrameWidth = gFrameHeight = 0;
+    gFrameLock.unlock_irqrestore(irq);
+    return true;
+}
+
+void framebuffer_frame_cancel_owner(uint64_t owner) {
+    if (!owner) return;
+    const uint64_t irq = gFrameLock.lock_irqsave();
+    if (gFrameOwner == owner) {
+        gFrameOwner = 0;
+        gFrameX = gFrameY = 0;
+        gFrameWidth = gFrameHeight = 0;
+    }
+    gFrameLock.unlock_irqrestore(irq);
+}
+
+bool framebuffer_frame_redirect_begin(
+    uint64_t owner, WelovecFramebufferRedirectState *state) {
+    if (!state) return false;
+    state->active = false;
+    uint64_t flags;
+    __asm__ volatile("pushfq; popq %0; cli" : "=r"(flags) :: "memory");
+    if (!owner || gFrameOwner != owner || !gFrameBuffer) {
+        if (flags & (UINT64_C(1) << 9)) __asm__ volatile("sti" ::: "memory");
+        return false;
+    }
+    state->framebuffer = framebuffer;
+    state->interrupt_flags = flags;
+    state->active = true;
+    framebuffer = gFrameBuffer;
+    return true;
+}
+
+void framebuffer_frame_redirect_end(WelovecFramebufferRedirectState *state) {
+    if (!state || !state->active) return;
+    framebuffer = state->framebuffer;
+    state->active = false;
+    if (state->interrupt_flags & (UINT64_C(1) << 9))
+        __asm__ volatile("sti" ::: "memory");
 }
 
 static uint64_t framebuffer_row_bytes(void) {

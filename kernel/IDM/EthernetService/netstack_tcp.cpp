@@ -1,19 +1,18 @@
 // Written by [@saphhic](https://github.com/saphhic)
-// Date: October 30th 2026
+// Date: October 31st 2026
 // Description: Implements TCP for the network stack.
 
-// netstack_tcp.cpp — TCP mínimo para KryptonOS
-// Implementa 3-way handshake, envío de datos, recepción y cierre.
-// Se apoya en ethernet_send / ethernet_receive del driver existente.
-//
-// Coloca este archivo en: KryptonKernel/drivers/ethernet/
-// Compila con LAWAI_TARGET_BIOS o LAWAI_TARGET_UEFI.
+// Small stop-and-wait TCP transport for the current single-core network stack.
+// It supports IPv4/IPv6 handshakes, ordered stream data, receive flow control,
+// and bounded retransmission. Congestion control and out-of-order buffering
+// are not implemented yet.
 
 #include "netstack_tcp.h"
 #include "netstack.h"
 #include "netstack_ipv6.h"
 #include "ethernet.h"
 #include "arch/x86_64/scheduler/scheduler.hpp"
+#include "security/privileges.hpp"
 
 extern "C" void* memcpy(void* dst, const void* src, unsigned long long n);
 extern "C" void* memset(void* dst, int v, unsigned long long n);
@@ -27,9 +26,22 @@ static constexpr uint8_t  kTcpFlagSYN    = 0x02;
 static constexpr uint8_t  kTcpFlagRST    = 0x04;
 static constexpr uint8_t  kTcpFlagPSH    = 0x08;
 static constexpr uint8_t  kTcpFlagACK    = 0x10;
-static constexpr uint64_t kConnectWaitTicks = 300;
+static constexpr uint64_t kConnectWaitTicks = 1600;
+static constexpr uint64_t kInitialRetransmitTicks = 100;
+static constexpr uint32_t kMaximumRetransmissions = 4;
 static constexpr uint16_t kBaseEphemeral = 49152;
 static constexpr uint16_t kMSS          = 1400;
+
+// Linux-compatible errno values used by the syscall ABI.
+static constexpr int kErrAgain = 11;
+static constexpr int kErrIo = 5;
+static constexpr int kErrInvalid = 22;
+static constexpr int kErrNoFileDescriptor = 24;
+static constexpr int kErrAddressNotAvailable = 99;
+static constexpr int kErrNetworkUnreachable = 101;
+static constexpr int kErrTimedOut = 110;
+static constexpr int kErrConnectionRefused = 111;
+static constexpr int kErrHostUnreachable = 113;
 
 // ── Utilidades byte-order ──────────────────────────────────
 
@@ -107,6 +119,12 @@ struct TcpConn {
     uint8_t  local_ip[16], remote_ip[16], remote_mac[6];
     uint16_t local_port, remote_port;
     uint32_t seq, ack;
+    uint32_t send_unacknowledged;
+    uint16_t peer_window;
+    uint16_t pending_length;
+    uint8_t pending_data[kMSS];
+    uint8_t retransmissions;
+    uint64_t retransmit_deadline;
     uint8_t  recv_buf[TCP_RECV_BUF_SIZE];
     int      recv_head, recv_tail;
 };
@@ -120,7 +138,6 @@ static int tcp_recv_buf_free_space(const TcpConn* c) {
 
 static TcpConn   s_conns[TCP_MAX_CONNS];
 static bool      s_init      = false;
-static uint16_t  s_next_port = kBaseEphemeral;
 static uint16_t  s_ip_id     = 1;
 
 static void tcp_init_once() {
@@ -137,10 +154,35 @@ static int tcp_alloc() {
     return -1;
 }
 
+static bool tcp_allocate_ephemeral_port(uint16_t random_value,
+                                        uint16_t* out_port) {
+    if (!out_port) return false;
+    constexpr uint32_t port_count = UINT16_MAX - kBaseEphemeral + 1u;
+    const uint32_t start = random_value % port_count;
+    for (uint32_t offset = 0; offset < port_count; ++offset) {
+        const uint16_t candidate = static_cast<uint16_t>(
+            kBaseEphemeral + (start + offset) % port_count);
+        bool used = false;
+        for (int i = 0; i < TCP_MAX_CONNS; ++i) {
+            if (s_conns[i].state != TCP_CLOSED &&
+                s_conns[i].local_port == candidate) {
+                used = true;
+                break;
+            }
+        }
+        if (!used) {
+            *out_port = candidate;
+            return true;
+        }
+    }
+    return false;
+}
+
 // ── Envío de segmento TCP+IP ───────────────────────────────
 
-static bool tcp_send_seg(TcpConn* c, uint8_t flags,
-                         const uint8_t* payload, uint16_t plen) {
+static bool tcp_send_seg_at(TcpConn* c, uint8_t flags,
+                            const uint8_t* payload, uint16_t plen,
+                            uint32_t sequence) {
     // Calcular el espacio libre en el buffer de recepción para anunciarlo (control de flujo)
     int free_space = tcp_recv_buf_free_space(c);
     uint16_t window_size = (free_space > 0) ? static_cast<uint16_t>(free_space) : 0;
@@ -152,7 +194,7 @@ static bool tcp_send_seg(TcpConn* c, uint8_t flags,
     memset(seg, 0, kTcpHdrLen);
     write_be16(&seg[0],  c->local_port);
     write_be16(&seg[2],  c->remote_port);
-    write_be32(&seg[4],  c->seq);
+    write_be32(&seg[4],  sequence);
     write_be32(&seg[8],  c->ack);
     seg[12] = static_cast<uint8_t>((kTcpHdrLen/4) << 4);
     seg[13] = flags;
@@ -185,6 +227,16 @@ static bool tcp_send_seg(TcpConn* c, uint8_t flags,
     return ethernet_send(c->remote_mac, 0x0800, frame, ip_total);
 }
 
+static bool tcp_send_seg(TcpConn* c, uint8_t flags,
+                         const uint8_t* payload, uint16_t plen) {
+    return tcp_send_seg_at(c, flags, payload, plen, c->seq);
+}
+
+static uint64_t retransmit_delay(uint32_t retransmissions) {
+    if (retransmissions > 3) retransmissions = 3;
+    return kInitialRetransmitTicks << retransmissions;
+}
+
 // ── Procesamiento de frame TCP entrante ───────────────────
 
 void tcp_handle_packet(const ethernet_packet* pkt) {
@@ -197,9 +249,12 @@ void tcp_handle_packet(const ethernet_packet* pkt) {
     uint16_t tcp_len = 0;
     if (pkt->ether_type == 0x0800) {
         const uint16_t ip_len = pkt->payload_length;
-        if (ip_len < 20 || ip[9] != kIpProtoTcp) return;
+        if (ip_len < 20 || (ip[0] >> 4) != 4 || ip[9] != kIpProtoTcp) return;
         const uint8_t ihl = static_cast<uint8_t>((ip[0] & 0x0F) * 4);
         if (ihl < 20 || ihl > ip_len) return;
+        if (ip_ones_complement(ip, ihl) != 0) return;
+        const uint16_t fragment = read_be16(&ip[6]);
+        if (fragment & 0xBFFFu) return;
         const uint16_t total_length = read_be16(&ip[2]);
         if (total_length < ihl || total_length > ip_len) return;
         src_ip = &ip[12];
@@ -229,6 +284,7 @@ void tcp_handle_packet(const ethernet_packet* pkt) {
     const uint32_t ack = read_be32(&tcp[8]);
     const uint8_t  doff= static_cast<uint8_t>((tcp[12]>>4)*4);
     const uint8_t  fl  = tcp[13];
+    const uint16_t window = read_be16(&tcp[14]);
     if (doff < kTcpHdrLen || doff > tcp_len) return;
     const uint8_t* data    = tcp + doff;
     const uint16_t data_len= static_cast<uint16_t>(tcp_len - doff);
@@ -237,14 +293,19 @@ void tcp_handle_packet(const ethernet_packet* pkt) {
         TcpConn* c = &s_conns[i];
         if (c->state == TCP_CLOSED) continue;
         if (c->ipv6 != ipv6) continue;
+        if (ipv6 ? !ip6eq(c->local_ip, dst_ip) : !ip4eq(c->local_ip, dst_ip))
+            continue;
         if (c->remote_port != sp) continue;
         if (c->local_port  != dp) continue;
         if (ipv6 ? !ip6eq(c->remote_ip, src_ip) : !ip4eq(c->remote_ip, src_ip)) continue;
 
         if (c->state == TCP_SYN_SENT) {
+            if (fl & kTcpFlagRST) { c->state = TCP_CLOSED; return; }
             if ((fl & (kTcpFlagSYN|kTcpFlagACK)) == (kTcpFlagSYN|kTcpFlagACK)) {
+                if (ack != c->seq) return;
                 c->ack = seq + 1;
-                c->seq = ack;
+                c->send_unacknowledged = ack;
+                c->peer_window = window;
                 c->state = TCP_ESTABLISHED;
                 tcp_send_seg(c, kTcpFlagACK, nullptr, 0);
             }
@@ -253,6 +314,34 @@ void tcp_handle_packet(const ethernet_packet* pkt) {
 
         if (c->state == TCP_ESTABLISHED || c->state == TCP_FIN_WAIT) {
             if (fl & kTcpFlagRST) { c->state = TCP_CLOSED; return; }
+
+            if (fl & kTcpFlagACK) {
+                const int32_t from_unacknowledged =
+                    static_cast<int32_t>(ack - c->send_unacknowledged);
+                const int32_t through_next = static_cast<int32_t>(ack - c->seq);
+                if (from_unacknowledged >= 0 && through_next <= 0) {
+                    const uint32_t acknowledged =
+                        ack - c->send_unacknowledged;
+                    if (acknowledged && c->pending_length) {
+                        if (acknowledged >= c->pending_length) {
+                            c->pending_length = 0;
+                        } else {
+                            for (uint32_t b = 0;
+                                 b < c->pending_length - acknowledged; ++b)
+                                c->pending_data[b] =
+                                    c->pending_data[b + acknowledged];
+                            c->pending_length = static_cast<uint16_t>(
+                                c->pending_length - acknowledged);
+                        }
+                        c->send_unacknowledged = ack;
+                        c->retransmissions = 0;
+                        c->retransmit_deadline =
+                            welovec::x86_64::scheduler::tick_count() +
+                            kInitialRetransmitTicks;
+                    }
+                    c->peer_window = window;
+                }
+            }
 
             // Solo aceptar el segmento esperado para evitar reordenamiento simple
             if (seq != c->ack) {
@@ -263,22 +352,27 @@ void tcp_handle_packet(const ethernet_packet* pkt) {
 
             if (data_len > 0) {
                 int free_space = tcp_recv_buf_free_space(c);
+                /* Do not acknowledge bytes that cannot be retained.  The
+                   sender will retransmit this segment after the application
+                   drains the receive buffer and we advertise the new window. */
+                if (data_len > free_space) {
+                    tcp_send_seg(c, kTcpFlagACK, nullptr, 0);
+                    return;
+                }
                 for (uint16_t b = 0; b < data_len; ++b) {
-                    if (free_space > 0) {
-                        c->recv_buf[c->recv_tail] = data[b];
-                        c->recv_tail = (c->recv_tail + 1) % TCP_RECV_BUF_SIZE;
-                        free_space--;
-                    }
+                    c->recv_buf[c->recv_tail] = data[b];
+                    c->recv_tail = (c->recv_tail + 1) % TCP_RECV_BUF_SIZE;
                 }
                 c->ack += data_len;
             }
 
-            tcp_send_seg(c, kTcpFlagACK, nullptr, 0);
+            bool acknowledge = data_len > 0;
             if (fl & kTcpFlagFIN) {
                 c->ack++;
-                tcp_send_seg(c, kTcpFlagACK, nullptr, 0);
+                acknowledge = true;
                 c->state = TCP_TIME_WAIT;
             }
+            if (acknowledge) tcp_send_seg(c, kTcpFlagACK, nullptr, 0);
         }
         return;
     }
@@ -300,7 +394,7 @@ static int tcp_connect_resolved(const uint8_t source_ip[16],
     tcp_init_once();
 
     int cid = tcp_alloc();
-    if (cid < 0) return -1;
+    if (cid < 0) return -kErrNoFileDescriptor;
 
     TcpConn* c = &s_conns[cid];
     c->ipv6 = ipv6;
@@ -312,68 +406,147 @@ static int tcp_connect_resolved(const uint8_t source_ip[16],
         cp4(c->remote_ip, dest_ip);
     }
     cp6(c->remote_mac, dest_mac);
-    c->local_port  = s_next_port++;
-    if (s_next_port == 0) s_next_port = kBaseEphemeral;
+    uint8_t initial_random[6];
+    if (!welovec::security::secure_random_bytes(initial_random,
+                                                sizeof(initial_random))) {
+        c->state = TCP_CLOSED;
+        return -kErrAgain;
+    }
+    const uint32_t initial_sequence = read_be32(initial_random);
+    const uint16_t port_random = read_be16(initial_random + 4);
+    if (!tcp_allocate_ephemeral_port(port_random, &c->local_port)) {
+        c->state = TCP_CLOSED;
+        return -kErrAddressNotAvailable;
+    }
     c->remote_port = dest_port;
-    c->seq         = 0x4C410001u;
+    c->seq         = initial_sequence;
+    c->send_unacknowledged = c->seq;
     c->ack         = 0;
     c->recv_head   = c->recv_tail = 0;
     c->state       = TCP_SYN_SENT;
 
     // SYN
-    if (!tcp_send_seg(c, kTcpFlagSYN, nullptr, 0)) { c->state=TCP_CLOSED; return -1; }
+    const uint32_t syn_sequence = c->seq;
+    if (!tcp_send_seg_at(c, kTcpFlagSYN, nullptr, 0, syn_sequence)) {
+        c->state = TCP_CLOSED;
+        return -kErrIo;
+    }
     c->seq++;
 
     // Esperar SYN-ACK
-    const uint64_t deadline =
-        welovec::x86_64::scheduler::tick_count() + kConnectWaitTicks;
+    const uint64_t start = welovec::x86_64::scheduler::tick_count();
+    const uint64_t deadline = start + kConnectWaitTicks;
+    uint64_t retransmit_at = start + kInitialRetransmitTicks;
+    uint32_t retransmissions = 0;
     while (welovec::x86_64::scheduler::tick_count() < deadline) {
         tcp_poll();
         if (c->state == TCP_ESTABLISHED) return cid;
-        if (c->state == TCP_CLOSED)      return -1;
+        if (c->state == TCP_CLOSED) return -kErrConnectionRefused;
+        const uint64_t now = welovec::x86_64::scheduler::tick_count();
+        if (now >= retransmit_at) {
+            if (retransmissions >= kMaximumRetransmissions) {
+                c->state = TCP_CLOSED;
+                return -kErrTimedOut;
+            }
+            if (!tcp_send_seg_at(c, kTcpFlagSYN, nullptr, 0, syn_sequence)) {
+                c->state = TCP_CLOSED;
+                return -kErrIo;
+            }
+            ++retransmissions;
+            retransmit_at = now + retransmit_delay(retransmissions);
+        }
         (void)welovec::x86_64::scheduler::sleep(1);
     }
     c->state = TCP_CLOSED;
-    return -1;
+    return -kErrTimedOut;
 }
 
 int tcp_connect(const uint8_t dest_ip[4], uint16_t dest_port) {
-    if (!dest_ip) return -1;
+    if (!dest_ip || !dest_port) return -kErrInvalid;
     netstack_info info = {};
     netstack_get_info(&info);
-    if (!info.initialized || !info.ipv4_configured) return -1;
+    if (!info.initialized || !info.ipv4_configured)
+        return -kErrNetworkUnreachable;
     uint8_t source[16] = {};
     uint8_t destination[16] = {};
     uint8_t mac[6] = {};
     cp4(source, info.ip);
     cp4(destination, dest_ip);
-    if (!netstack_resolve_ipv4_mac(dest_ip, mac)) return -1;
+    if (!netstack_resolve_ipv4_mac(dest_ip, mac))
+        return -kErrHostUnreachable;
     return tcp_connect_resolved(source, destination, mac, dest_port, false);
 }
 
 int tcp_connect_ipv6(const uint8_t dest_ip[16], uint16_t dest_port) {
-    if (!dest_ip) return -1;
+    if (!dest_ip || !dest_port) return -kErrInvalid;
     netstack_ipv6_info info{};
     netstack_ipv6_get_info(&info);
-    if (!info.configured) return -1;
+    if (!info.configured) return -kErrNetworkUnreachable;
     uint8_t source[16] = {};
     uint8_t mac[6] = {};
-    if (!netstack_ipv6_resolve(dest_ip, source, mac)) return -1;
+    if (!netstack_ipv6_resolve(dest_ip, source, mac))
+        return -kErrHostUnreachable;
     return tcp_connect_resolved(source, dest_ip, mac, dest_port, true);
 }
 
 bool tcp_send(int id, const uint8_t* data, uint16_t len) {
-    if (id < 0 || id >= TCP_MAX_CONNS) return false;
+    if (id < 0 || id >= TCP_MAX_CONNS || (!data && len)) return false;
     TcpConn* c = &s_conns[id];
     if (c->state != TCP_ESTABLISHED) return false;
 
     uint16_t sent = 0;
     while (sent < len) {
+        const uint64_t wait_start = welovec::x86_64::scheduler::tick_count();
+        while (c->send_unacknowledged != c->seq || !c->peer_window) {
+            tcp_poll();
+            if (c->state != TCP_ESTABLISHED) return false;
+            const uint64_t now = welovec::x86_64::scheduler::tick_count();
+            if (now - wait_start >= kConnectWaitTicks) return false;
+            (void)welovec::x86_64::scheduler::sleep(1);
+        }
+
         uint16_t chunk = static_cast<uint16_t>(len - sent);
         if (chunk > kMSS) chunk = kMSS;
-        if (!tcp_send_seg(c, kTcpFlagACK|kTcpFlagPSH, data+sent, chunk)) return false;
-        c->seq = static_cast<uint32_t>(c->seq + chunk);
-        sent   = static_cast<uint16_t>(sent + chunk);
+        if (chunk > c->peer_window) chunk = c->peer_window;
+        if (!chunk) return false;
+
+        const uint32_t sequence = c->seq;
+        for (uint16_t b = 0; b < chunk; ++b)
+            c->pending_data[b] = data[sent + b];
+        c->pending_length = chunk;
+        c->retransmissions = 0;
+        if (!tcp_send_seg_at(c, kTcpFlagACK|kTcpFlagPSH,
+                             c->pending_data, chunk, sequence)) {
+            c->pending_length = 0;
+            return false;
+        }
+        c->seq += chunk;
+        c->retransmit_deadline =
+            welovec::x86_64::scheduler::tick_count() +
+            kInitialRetransmitTicks;
+
+        while (c->send_unacknowledged != c->seq) {
+            tcp_poll();
+            if (c->send_unacknowledged == c->seq) break;
+            if (c->state != TCP_ESTABLISHED) return false;
+
+            const uint64_t now = welovec::x86_64::scheduler::tick_count();
+            if (now >= c->retransmit_deadline) {
+                if (c->retransmissions >= kMaximumRetransmissions ||
+                    !c->pending_length ||
+                    !tcp_send_seg_at(c, kTcpFlagACK|kTcpFlagPSH,
+                                     c->pending_data, c->pending_length,
+                                     c->send_unacknowledged)) {
+                    c->pending_length = 0;
+                    return false;
+                }
+                ++c->retransmissions;
+                c->retransmit_deadline = now +
+                    retransmit_delay(c->retransmissions);
+            }
+            (void)welovec::x86_64::scheduler::sleep(1);
+        }
+        sent += chunk;
     }
     return true;
 }
@@ -383,7 +556,8 @@ int tcp_recv(int id,
              int buf_size,
              uint32_t max_loops)
 {
-    if (id < 0 || id >= TCP_MAX_CONNS)
+    if (id < 0 || id >= TCP_MAX_CONNS || buf_size < 0 ||
+        (!buf && buf_size > 0))
         return 0;
 
     TcpConn* c = &s_conns[id];
@@ -410,6 +584,10 @@ int tcp_recv(int id,
         // Si ya hemos copiado datos al buffer del usuario, retornamos inmediatamente.
         // La aplicación puede volver a llamar a tcp_recv si necesita más datos.
         if (got > 0) {
+            /* Reading data opens receive-window space.  Advertise it now so
+               peers that stopped at a zero window can resume promptly. */
+            if (c->state == TCP_ESTABLISHED)
+                tcp_send_seg(c, kTcpFlagACK, nullptr, 0);
             break;
         }
 

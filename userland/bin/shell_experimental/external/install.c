@@ -5,6 +5,7 @@
 #include "cmd_common.h"
 #include "../include/command_config.h"
 #include "lib/tls/tls_client.h"
+#include "lib/web/url.h"
 #include "user/network.h"
 #include "user/security.h"
 
@@ -17,15 +18,6 @@
 
 static uint8_t *response_data;
 static uint64_t response_capacity;
-
-static int starts_with(const char *text, const char *prefix) {
-    uint32_t index = 0;
-    while (prefix[index]) {
-        if (text[index] != prefix[index]) return 0;
-        ++index;
-    }
-    return 1;
-}
 
 static char ascii_lower(char value) {
     return value >= 'A' && value <= 'Z' ? (char)(value - 'A' + 'a') : value;
@@ -45,177 +37,6 @@ static int copy_part(char *destination, uint32_t capacity,
         destination[index] = source[index];
     destination[length] = '\0';
     return 1;
-}
-
-static int valid_request_target(const char *path) {
-    if (!path || path[0] != '/') return 0;
-    for (uint32_t index = 0; path[index]; ++index) {
-        const uint8_t character = (uint8_t)path[index];
-        if (character <= 0x20 || character == 0x7f || character == '\\') return 0;
-    }
-    return 1;
-}
-
-static int valid_hostname(const char *host, uint32_t length) {
-    uint32_t label_length = 0;
-    if (!length || length > 127 || host[0] == '.' || host[0] == '-') return 0;
-    for (uint32_t index = 0; index < length; ++index) {
-        const char c = host[index];
-        if (c == '.') {
-            if (!label_length || host[index - 1] == '-') return 0;
-            label_length = 0;
-            continue;
-        }
-        if (!((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
-              (c >= '0' && c <= '9') || c == '-')) return 0;
-        if (!label_length && c == '-') return 0;
-        if (++label_length > 63) return 0;
-    }
-    return label_length && host[length - 1] != '-';
-}
-
-static int parse_ipv6_literal(const char *text, uint8_t address[16]) {
-    uint8_t parsed[16] = {0};
-    int compression = -1;
-    uint8_t groups = 0;
-    const char *cursor = text;
-    if (!cursor || !*cursor) return 0;
-    if (*cursor == ':') {
-        if (cursor[1] != ':') return 0;
-        compression = 0;
-        cursor += 2;
-        if (!*cursor) {
-            for (uint32_t i = 0; i < 16; ++i) address[i] = 0;
-            return 1;
-        }
-    }
-    while (*cursor) {
-        if (groups >= 8) return 0;
-        uint32_t value = 0;
-        uint32_t digits = 0;
-        while (*cursor && *cursor != ':') {
-            const char c = *cursor++;
-            uint32_t nibble;
-            if (c >= '0' && c <= '9') nibble = (uint32_t)(c - '0');
-            else if (c >= 'a' && c <= 'f') nibble = (uint32_t)(c - 'a' + 10);
-            else if (c >= 'A' && c <= 'F') nibble = (uint32_t)(c - 'A' + 10);
-            else return 0;
-            if (++digits > 4) return 0;
-            value = (value << 4) | nibble;
-        }
-        if (!digits) return 0;
-        parsed[groups * 2] = (uint8_t)(value >> 8);
-        parsed[groups * 2 + 1] = (uint8_t)value;
-        ++groups;
-        if (!*cursor) break;
-        ++cursor;
-        if (*cursor == ':') {
-            if (compression >= 0) return 0;
-            compression = groups;
-            ++cursor;
-            if (!*cursor) break;
-        } else if (!*cursor) {
-            return 0;
-        }
-    }
-    if (compression >= 0) {
-        if (groups >= 8) return 0;
-        const uint8_t zeros = (uint8_t)(8 - groups);
-        for (int i = (int)groups - 1; i >= compression; --i) {
-            parsed[(i + zeros) * 2] = parsed[i * 2];
-            parsed[(i + zeros) * 2 + 1] = parsed[i * 2 + 1];
-        }
-        for (uint8_t i = 0; i < zeros; ++i) {
-            parsed[(compression + i) * 2] = 0;
-            parsed[(compression + i) * 2 + 1] = 0;
-        }
-    } else if (groups != 8) {
-        return 0;
-    }
-    for (uint32_t i = 0; i < 16; ++i) address[i] = parsed[i];
-    return 1;
-}
-
-static int parse_port(const char *start, uint32_t length, uint16_t *port) {
-    uint32_t parsed = 0;
-    if (!length) return 0;
-    for (uint32_t i = 0; i < length; ++i) {
-        if (start[i] < '0' || start[i] > '9') return 0;
-        const uint32_t digit = (uint32_t)(start[i] - '0');
-        if (parsed > (65535u - digit) / 10u) return 0;
-        parsed = parsed * 10u + digit;
-    }
-    if (!parsed) return 0;
-    *port = (uint16_t)parsed;
-    return 1;
-}
-
-static int parse_url(const char *url, char host[128], char path[256],
-                     uint16_t *port, int *secure, int *ipv6_literal) {
-    const char *start = 0;
-    *secure = 0;
-    if (starts_with(url, "http://")) {
-        start = url + 7;
-    } else if (starts_with(url, "https://")) {
-        start = url + 8;
-        *secure = 1;
-    } else {
-        cmd_print("install: URL must start with http:// or https://\n", CMD_RED);
-        return 0;
-    }
-    uint32_t authority_length = 0;
-    while (start[authority_length] && start[authority_length] != '/' &&
-           start[authority_length] != '?' && start[authority_length] != '#')
-        ++authority_length;
-    if (!authority_length) return 0;
-    *port = *secure ? 443 : 80;
-    *ipv6_literal = 0;
-    uint32_t authority_cursor = 0;
-    if (start[0] == '[') {
-        uint32_t close = 1;
-        while (close < authority_length && start[close] != ']') ++close;
-        if (close == authority_length || close == 1 || close - 1 >= 128 ||
-            !copy_part(host, 128, start + 1, close - 1)) return 0;
-        uint8_t parsed_address[16];
-        if (!parse_ipv6_literal(host, parsed_address)) return 0;
-        *ipv6_literal = 1;
-        authority_cursor = close + 1;
-        if (authority_cursor < authority_length) {
-            if (start[authority_cursor] != ':' ||
-                !parse_port(start + authority_cursor + 1,
-                            authority_length - authority_cursor - 1, port)) return 0;
-        }
-    } else {
-        uint32_t colon = authority_length;
-        for (uint32_t index = 0; index < authority_length; ++index) {
-            if (start[index] == ':') {
-                if (colon != authority_length) return 0;
-                colon = index;
-            }
-        }
-        if (!colon || colon >= 128 || !valid_hostname(start, colon) ||
-            !copy_part(host, 128, start, colon)) return 0;
-        if (colon < authority_length &&
-            !parse_port(start + colon + 1, authority_length - colon - 1, port))
-            return 0;
-    }
-    const char *url_path = start + authority_length;
-    if (!url_path[0] || url_path[0] == '#')
-        return copy_part(path, 256, "/", 1);
-    if (url_path[0] == '?') {
-        uint32_t query_length = 0;
-        while (url_path[query_length] && url_path[query_length] != '#') ++query_length;
-        if (query_length + 1 >= 256) return 0;
-        path[0] = '/';
-        for (uint32_t index = 0; index < query_length; ++index)
-            path[index + 1] = url_path[index];
-        path[query_length + 1] = '\0';
-        return valid_request_target(path);
-    }
-    uint32_t path_length = 0;
-    while (url_path[path_length] && url_path[path_length] != '#') ++path_length;
-    return copy_part(path, 256, url_path, path_length) &&
-           valid_request_target(path);
 }
 
 static int64_t transport_send(int socket, struct welovec_tls_session *tls,
@@ -477,15 +298,16 @@ void userland_main(uint64_t argc, char **argv) {
     }
     const uint64_t url_argument = all_files ? 2u : 1u;
     const uint64_t destination_argument = url_argument + 1u;
-    char host[128], request_path[256];
-    uint16_t port = 80;
-    int secure = 0;
-    int ipv6_literal = 0;
-    if (!parse_url(argv[url_argument], host, request_path, &port, &secure,
-                   &ipv6_literal)) {
+    struct welovec_url parsed_url;
+    if (!welovec_url_parse(argv[url_argument], &parsed_url)) {
         cmd_print("install: invalid or unsupported URL\n", CMD_RED);
         return;
     }
+    const char *host = parsed_url.host;
+    const char *request_path = parsed_url.path;
+    const uint16_t port = parsed_url.port;
+    const int secure = parsed_url.secure;
+    const int ipv6_literal = parsed_url.ipv6_literal;
     char destination[WELOVEC_USER_PATH_MAX];
     if (argc > destination_argument) {
         uint32_t index = 0;
@@ -514,7 +336,7 @@ void userland_main(uint64_t argc, char **argv) {
     uint8_t address6[16] = {0};
     int use_ipv6 = ipv6_literal;
     if (ipv6_literal) {
-        if (!parse_ipv6_literal(host, address6)) {
+        if (!welovec_url_parse_ipv6(host, address6)) {
             cmd_print("install: invalid IPv6 address\n", CMD_RED);
             return;
         }

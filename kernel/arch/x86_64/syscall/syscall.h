@@ -116,6 +116,8 @@ struct __attribute__((packed)) syscall_regs_t {
 #define SYS_INPUT_FORWARD 80
 #define SYS_FB_SURFACE_GENERATION 81
 #define SYS_TERMINATE_WINDOWED_TREE 82
+#define SYS_FB_FRAME_BEGIN 83
+#define SYS_FB_FRAME_END 84
 
 /* Returns use negative errno values on failure unless the wrapper says otherwise. */
 /* SYS_WRITE: RDI=user buffer, RSI=byte count; returns bytes written. */

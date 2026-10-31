@@ -48,6 +48,20 @@ static inline int64_t welovec_fb_get_info(struct welovec_fb_info *info) {
     return welovec_user_syscall1(WELOVEC_SYS_FB_INFO, (uint64_t)(uintptr_t)info);
 }
 
+/* Draw a damaged screen region off-screen, then publish it with frame_end. */
+static inline int64_t welovec_fb_frame_begin(int32_t x, int32_t y,
+                                             int32_t width, int32_t height) {
+    return welovec_user_syscall4(WELOVEC_SYS_FB_FRAME_BEGIN,
+                                 (uint64_t)(int64_t)x,
+                                 (uint64_t)(int64_t)y,
+                                 (uint64_t)(int64_t)width,
+                                 (uint64_t)(int64_t)height);
+}
+
+static inline int64_t welovec_fb_frame_end(void) {
+    return welovec_user_syscall0(WELOVEC_SYS_FB_FRAME_END);
+}
+
 static inline int64_t welovec_fb_pixel(int32_t x, int32_t y, uint32_t color) {
     return welovec_user_syscall3(WELOVEC_SYS_FB_PIXEL, (uint64_t)(int64_t)x,
                                  (uint64_t)(int64_t)y, color);

@@ -1,5 +1,5 @@
 <!-- Written by [@saphhic](https://github.com/saphhic) -->
-<!-- Date: October 30th 2026 -->
+<!-- Date: October 31st 2026 -->
 <!-- Description: Documents the system call API available to user-space programs. -->
 
 # Userland system-call API
@@ -11,12 +11,16 @@ receive kernel addresses.
 
 ## Framebuffer and desktop drawing
 
-Include `user/framebuffer.h`. The framebuffer is a shared device, so a program
-can draw over pixels another program has drawn. Calls are clipped to the screen
-and drawing requests are bounded to 16 Mi pixels per call; text is limited to
-4096 bytes. Colors use `0xAARRGGBB` (`welovec_fb_rgb()` creates opaque colors).
-There is no compositor, per-process surface, window manager, or display focus
-policy yet.
+Include `user/framebuffer.h`. The framebuffer is a shared device, so raw drawing
+calls can draw over pixels another program has drawn. Calls are clipped to the
+screen and drawing requests are bounded to 16 Mi pixels per call; text is
+limited to 4096 bytes. Colors use `0xAARRGGBB` (`welovec_fb_rgb()` creates
+opaque colors). The desktop batches each damaged region with
+`welovec_fb_frame_begin()` and `welovec_fb_frame_end()`, so its drawing commands
+are published together instead of appearing one primitive at a time. Other
+programs can use the same pair; if the kernel cannot allocate its screen-sized
+back buffer, `frame_begin` returns an error and callers can keep drawing
+directly.
 
 ```c
 #include "user/framebuffer.h"
@@ -47,6 +51,9 @@ rows with the supplied color. Each drawing syscall is limited to 16 Mi pixels.
 The API deliberately does not expose the framebuffer address, `framebuffer_init`,
 or the kernel console's global cursor/color setters and `printf_fb` state. Apps
 draw through checked operations rather than writing physical memory.
+`welovec_fb_frame_begin(x, y, width, height)` starts a buffered update for a
+screen region, and `welovec_fb_frame_end()` publishes it. Always end a frame
+after drawing; process termination cancels an unfinished frame.
 
 ### Text output and clearing
 
@@ -109,11 +116,14 @@ is suitable for a multi-user desktop with mutually untrusted apps.
 
 ## Network access
 
-Include `user/network.h`. Userland gets IPv4 configuration, ICMP ping, IPv4 DNS,
-and a small process-owned TCP interface. No raw Ethernet frames, DMA buffers,
-PCI/MMIO addresses, or driver controls are exposed. DNS is IPv4-only. TCP has at
-most eight kernel connections system-wide, allows up to 1400 bytes per send or
-receive call, and receive is nonblocking (zero means no data queued yet).
+Include `user/network.h`. Userland gets IPv4/IPv6 configuration, ICMP ping,
+DNS A/AAAA lookups, and a small process-owned TCP interface. No raw Ethernet
+frames, DMA buffers, PCI/MMIO addresses, or driver controls are exposed. DNS
+requests use the configured IPv4 DNS server. TCP has at most eight kernel
+connections system-wide, allows up to 1400 bytes per send or receive call, and
+receive is nonblocking (zero means no data queued yet). Each receive call polls
+the network stack once and then drains queued bytes; it must not skip the poll
+or it can leave newly arrived TCP data unread.
 
 ```c
 #include "user/network.h"
@@ -142,12 +152,33 @@ static void request_http_page(void) {
 }
 ```
 
-These calls can support simple HTTP clients and sequential TCP connect checks.
-They do not provide TLS, IPv6, UDP sockets, raw sockets, or a complete production
-TCP implementation; a browser must not send credentials or other secrets over
-this current stack. Ping/DNS/TCP operations and the kernel polling worker are
-serialized because the current network stack has shared packet-processing
-state.
+The TCP transport retries SYN and unacknowledged data segments, tracks peer ACKs
+and receive windows, rejects data it cannot retain, and uses unpredictable
+initial sequence numbers and ephemeral ports from the kernel random generator.
+Connect failures preserve their cause: `-EAGAIN` means no secure entropy source
+is available, `-EHOSTUNREACH` means ARP/NDP could not resolve the next hop,
+`-EIO` means sending the SYN failed, `-ECONNREFUSED` means the peer sent a reset,
+and `-ETIMEDOUT` means no handshake response arrived.
+It still processes data in order with a stop-and-wait sender; congestion
+control, window scaling, out-of-order buffering, complete FIN handling, UDP
+sockets, and raw sockets are not implemented. IPv4 fragments and IPv6 extension
+headers are unsupported. It is not yet a production TCP stack.
+
+TLS is available through the userland Mbed TLS adapter in `userland/lib/tls/`,
+not through a kernel syscall. The adapter requires TLS 1.2 or newer, validates
+the certificate chain and hostname against the installed CA bundle, and uses
+the kernel random and UTC clock interfaces. The build links that adapter into
+both `install` and the text browser. The shared HTTP client in
+`userland/lib/web/http.c` provides bounded GET requests, `Content-Length` and
+chunked response handling, and limited redirect support. The browser keeps
+certificate errors visible and never silently falls back from HTTPS to HTTP.
+Its HTML-to-text converter is a small presentation helper, not a standards
+compliant browser engine.
+
+Ping/DNS/TCP operations and the kernel polling worker are serialized because
+the current network stack has shared packet-processing state. Browser work
+still needs real network-loss and interoperability checks before this transport
+can be treated as production-ready.
 
 ## Syscall number list
 
@@ -206,11 +237,13 @@ Unless specified otherwise, failures return `-errno`.
 | 47 | `NET_INFO` | `RDI=IPv4 network info output`. |
 | 48 | `NET_PING` | `RDI=4-byte IPv4 address`; return 0 on reply, `-ETIMEDOUT` otherwise. |
 | 49 | `NET_DNS` | `RDI=hostname`, `RSI=4-byte IPv4 output`. |
-| 50 | `NET_TCP_CONNECT` | `RDI=IPv4 address`, `RSI=port`; returns process-owned socket handle. |
+| 50 | `NET_TCP_CONNECT` | `RDI=IPv4 address`, `RSI=port`; returns a process-owned socket handle or a negative errno identifying route, entropy, send, refusal, or timeout failures. |
 | 51 | `NET_TCP_SEND` | `RDI=socket`, `RSI=data`, `RDX=size` (maximum 1400). |
-| 52 | `NET_TCP_RECV` | `RDI=socket`, `RSI=output`, `RDX=capacity` (maximum 1400, nonblocking). |
+| 52 | `NET_TCP_RECV` | `RDI=socket`, `RSI=output`, `RDX=capacity` (maximum 1400, nonblocking; polls once). |
 | 53 | `NET_TCP_CLOSE` | Close process-owned TCP handle; `RDI=socket`. |
 | 54 | `FB_SCROLL_UP` | `RDI=x`, `RSI=y`, `RDX=w`, `R10=h`, `R8=rows`, `R9=fill color`; region limited to 16 Mi pixels. |
+| 83 | `FB_FRAME_BEGIN` | Buffer a clipped screen region; `RDI=x`, `RSI=y`, `RDX=width`, `R10=height`. |
+| 84 | `FB_FRAME_END` | Publish the current buffered region; no arguments. |
 
 ## Return-value convention
 

@@ -422,6 +422,22 @@ int64_t framebuffer_surface_generation_syscall(const syscall_regs_t *regs) {
     return static_cast<int64_t>(generation);
 }
 
+int64_t framebuffer_frame_begin_syscall(const syscall_regs_t *regs) {
+    int32_t x = 0, y = 0, width = 0, height = 0;
+    if (!decode_i32(regs->rdi, &x) || !decode_i32(regs->rsi, &y) ||
+        !decode_i32(regs->rdx, &width) || !decode_i32(regs->r10, &height) ||
+        width <= 0 || height <= 0)
+        return -static_cast<int64_t>(kErrInvalid);
+    return framebuffer_frame_begin(welovec::process::current_id(), x, y,
+                                   width, height)
+        ? 0 : -static_cast<int64_t>(kErrNoMemory);
+}
+
+int64_t framebuffer_frame_end_syscall() {
+    return framebuffer_frame_end(welovec::process::current_id())
+        ? 0 : -static_cast<int64_t>(kErrInvalid);
+}
+
 int64_t input_forward_syscall(const syscall_regs_t *regs) {
     constexpr uint64_t maximum_characters = 255;
     constexpr uint64_t maximum_events = 15;
@@ -632,19 +648,14 @@ int64_t network_tcp_connect_syscall(const syscall_regs_t *regs) {
         return -static_cast<int64_t>(kErrNoFileDescriptor);
     }
 
-    netstack_info info{};
-    netstack_get_info(&info);
-    const int transport_id = info.initialized && info.ipv4_configured
-        ? tcp_connect(address, static_cast<uint16_t>(regs->rsi)) : -1;
+    const int transport_id = tcp_connect(
+        address, static_cast<uint16_t>(regs->rsi));
     const uint64_t finish_irq = gUserTcpSocketLock.lock_irqsave();
     if (transport_id >= 0) gUserTcpSockets[slot].transport_id = transport_id;
     else reset_user_tcp_socket(static_cast<uint32_t>(slot));
     gUserTcpSocketLock.unlock_irqrestore(finish_irq);
     welovec_network_api_unlock(network_flags);
-    if (transport_id < 0)
-        return info.initialized && info.ipv4_configured
-            ? -static_cast<int64_t>(kErrTimedOut)
-            : -static_cast<int64_t>(kErrNetworkUnreachable);
+    if (transport_id < 0) return transport_id;
     return slot + 1;
 }
 
@@ -674,18 +685,14 @@ int64_t network_tcp_connect_ipv6_syscall(const syscall_regs_t *regs) {
         return -static_cast<int64_t>(kErrNoFileDescriptor);
     }
 
-    netstack_ipv6_info info{};
-    netstack_ipv6_get_info(&info);
-    const int transport_id = info.configured
-        ? tcp_connect_ipv6(address, static_cast<uint16_t>(regs->rsi)) : -1;
+    const int transport_id = tcp_connect_ipv6(
+        address, static_cast<uint16_t>(regs->rsi));
     const uint64_t finish_irq = gUserTcpSocketLock.lock_irqsave();
     if (transport_id >= 0) gUserTcpSockets[slot].transport_id = transport_id;
     else reset_user_tcp_socket(static_cast<uint32_t>(slot));
     gUserTcpSocketLock.unlock_irqrestore(finish_irq);
     welovec_network_api_unlock(network_flags);
-    if (transport_id < 0)
-        return info.configured ? -static_cast<int64_t>(kErrTimedOut)
-                               : -static_cast<int64_t>(kErrNetworkUnreachable);
+    if (transport_id < 0) return transport_id;
     return slot + 1;
 }
 
@@ -725,8 +732,10 @@ int64_t network_tcp_receive_syscall(const syscall_regs_t *regs) {
         welovec_network_api_unlock(network_flags);
         return -static_cast<int64_t>(kErrBadDescriptor);
     }
+    /* tcp_recv performs no work when max_wait_loops is zero.  The syscall is
+       nonblocking, so poll once and then return whatever is already queued. */
     const int received = regs->rdx
-        ? tcp_recv(transport_id, data, static_cast<int>(regs->rdx), 0) : 0;
+        ? tcp_recv(transport_id, data, static_cast<int>(regs->rdx), 1) : 0;
     welovec_network_api_unlock(network_flags);
     if (received > 0 && !welovec::process::copy_to_current_user(
             regs->rsi, data, static_cast<uint64_t>(received)))
@@ -1393,6 +1402,8 @@ void syscall_dispatch(syscall_regs_t *regs) {
         syscall_number == SYS_PRINT_CURSOR_GET ||
         syscall_number == SYS_PRINT_CURSOR_SET ||
         syscall_number == SYS_PRINT_SCROLLBACK;
+    const bool framebuffer_blit_operation =
+        syscall_number == SYS_FB_SURFACE_BLIT;
     WelovecFramebufferTargetState framebuffer_target{};
     bool framebuffer_target_active = false;
     if (framebuffer_operation) {
@@ -1401,6 +1412,11 @@ void syscall_dispatch(syscall_regs_t *regs) {
             framebuffer_target_active =
                 framebuffer_surface_begin(surface, &framebuffer_target);
     }
+    WelovecFramebufferRedirectState framebuffer_redirect{};
+    const bool framebuffer_redirect_active =
+        (framebuffer_operation || framebuffer_blit_operation) &&
+        framebuffer_frame_redirect_begin(welovec::process::current_id(),
+                                          &framebuffer_redirect);
     switch (regs->rax) {
         case SYS_WRITE: {
             regs->rax = static_cast<uint64_t>(console_write_user(regs->rdi, regs->rsi));
@@ -1715,6 +1731,12 @@ void syscall_dispatch(syscall_regs_t *regs) {
         case SYS_TERMINATE_WINDOWED_TREE:
             regs->rax = static_cast<uint64_t>(terminate_windowed_tree_syscall(regs));
             break;
+        case SYS_FB_FRAME_BEGIN:
+            regs->rax = static_cast<uint64_t>(framebuffer_frame_begin_syscall(regs));
+            break;
+        case SYS_FB_FRAME_END:
+            regs->rax = static_cast<uint64_t>(framebuffer_frame_end_syscall());
+            break;
         case SYS_FB_INFO:
             regs->rax = static_cast<uint64_t>(framebuffer_info_syscall(regs));
             break;
@@ -1788,6 +1810,8 @@ void syscall_dispatch(syscall_regs_t *regs) {
 
     if (framebuffer_target_active)
         framebuffer_surface_end(&framebuffer_target);
+    if (framebuffer_redirect_active)
+        framebuffer_frame_redirect_end(&framebuffer_redirect);
 
     uint32_t delivered_signal = 0;
     const int signal_result = welovec::process::prepare_pending_signal(

@@ -3,13 +3,14 @@
 // Description: Manages desktop windows, focus, movement, and resizing.
 
 #include "desktop/include/desktop.h"
+#include "user/framebuffer.h"
 #include "user/time.h"
 
 /*
- * Window manager. Windows are plain rectangles in a z-ordered list; their
- * content is produced on demand by the owning app's draw() callback, so no
- * pixels are ever stored. Moving a window drags an outline and only repaints
- * the strips it leaves behind; the window itself is repainted once on release.
+ * Window manager. Windows are plain rectangles in a z-ordered list; built-in
+ * app content is produced on demand, while windowed child programs provide a
+ * private surface. Moving a window drags an outline and only repaints the
+ * strips it leaves behind; the window itself is repainted once on release.
  */
 
 #define BTN_W 22
@@ -223,6 +224,8 @@ void wm_taskbar_repaint(void) { wm_repaint(g_desk.taskbar); }
 void wm_repaint(rect_t area) {
     area = rect_intersect(area, screen_rect());
     if (rect_empty(area)) return;
+    const int frame_started = welovec_fb_frame_begin(
+        area.x, area.y, area.w, area.h) == 0;
     gfx_clip(area);
     gfx_fill(area.x, area.y, area.w, area.h, C_DESKTOP);
     icons_draw(area);
@@ -243,6 +246,7 @@ void wm_repaint(rect_t area) {
         cursor_draw();
     }
     gfx_clip_screen();
+    if (frame_started) (void)welovec_fb_frame_end();
 }
 
 void wm_full_repaint(void) { wm_repaint(screen_rect()); }

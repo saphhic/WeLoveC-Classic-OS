@@ -1,7 +1,7 @@
 # WeLoveC Classic — unified documentation
 
 Written by [@saphhic](https://github.com/saphhic)  \
-Date: October 30th 2026
+Date: October 31st 2026
 
 Description: a single document containing the README guides for the WeLoveC Classic operating system.
 
@@ -19,6 +19,7 @@ Description: a single document containing the README guides for the WeLoveC Clas
 - [Filesystem layer](#filesystem-layer)
 - [Users, passwords, and privileges](#users-passwords-and-privileges)
 - [Userland programs](#userland-programs)
+- [Web browser](#web-browser)
 - [WeLoveC lightweight desktop](#welovec-lightweight-desktop)
 
 ## Files kept without headers
@@ -29,6 +30,7 @@ Source code, headers, configuration files, and build scripts contain the author,
 - `userland/certs/ca-bundle.pem` contains root certificates used to verify TLS servers.
 - `ubuntu-font-licence-1.0.txt` preserves the terms for the bundled Ubuntu font.
 - `third_party/mbedtls/` contains the upstream Mbed TLS source archive used by the build.
+- `third_party/netsurf/netsurf-all-3.11.tar.gz` contains NetSurf 3.11 and its component license notices. The browser build extracts Hubbub and ParserUtils from it.
 - `build/` and `*/build/` contain generated executables and object files; the Makefiles recreate them.
 
 ## WeLoveC Classic build
@@ -45,9 +47,11 @@ make iso      # create build/WeLoveC-UEFI.iso with xorriso
 make clean
 ```
 
-Building userland requires `clang`, `cmake`, `tar`, and `sha256sum` (or
+Building userland requires `clang`, `cmake`, `tar`, `perl`, and `sha256sum` (or
 `shasum`). The pinned Mbed TLS source archive is hash-checked, built locally
-for the freestanding x86-64 target, and linked into the `install` command.
+for the freestanding x86-64 target, and linked into the `install` command. The
+browser build extracts NetSurf's Hubbub HTML parser and ParserUtils library,
+then compiles them as static freestanding libraries without Iconv.
 
 The kernel Makefile discovers each directory containing `.c`, `.cpp`, or `.S`
 sources, compiles those sources, archives each directory separately, then links
@@ -786,6 +790,59 @@ program. The shell's `external/` sources are explicitly excluded from the shell
 ELF and linked one by one, then copied to its `bin/` directory. Configuration
 files are copied while preserving their source paths. Each standalone program
 defines `userland_main`; C++ programs should declare it with `extern "C"`.
+
+## Web browser
+
+`userland/bin/browser/browser.elf` is a windowed, text-only browser prototype.
+The desktop discovers it with the other programs under `/userspace/bin`; open
+it from the Start menu's Programs list. Enter a URL, use `u` to edit the
+address, `r` to reload, arrows or `j`/`k` to scroll, Space/`b` to move a page,
+`[`/`]` to select a link, Enter to open it, `h`/`f` to move through the
+16-entry history, and `q` to end the browser process. The desktop keeps an
+exited program's window visible until it is closed with the window's close
+button. An optional URL argument can be passed when launching the ELF.
+
+The browser uses the shared `userland/lib/web/` code. `url.c` parses bounded
+HTTP(S) URLs and resolves relative redirects. `http.c` performs GET requests
+over the process-owned TCP interface; it handles `Content-Length` and chunked
+responses, limits response headers to 16 KiB, follows at most five redirects,
+and refuses HTTPS-to-HTTP downgrades. The browser caps each response body at
+256 KiB. `tls_client.c` provides TLS 1.2 or newer and validates the server name
+and certificate chain against `/userland/certs/ca-bundle.pem`. Certificate
+errors stay visible and HTTPS is never retried over HTTP. No credentials or
+cookies are sent. Plain HTTP responses are marked as unencrypted in the status
+line. Network failures distinguish DNS resolution, TCP connection, request
+send, and response receive errors. TCP connection failures also distinguish a
+missing route, missing secure kernel entropy, a rejected port, a failed SYN
+send, and a handshake timeout. A timeout only means that no TCP handshake reply
+arrived; it cannot tell by itself whether the server, port, or a firewall
+silenced the request. HTTPS opens TCP port 443 before starting TLS. A page that
+contains only HTML can still use either HTTP or HTTPS; if a server only offers
+plain HTTP, its URL must begin with `http://`. TCP requires secure entropy for
+sequence numbers and local ports. The kernel uses the UEFI RNG, CPU RDSEED/RDRAND,
+or its VirtIO RNG driver. For QEMU, add `-device virtio-rng-pci` to the existing
+VM command line and reboot; predictable random values are not used because the
+same generator also protects TLS.
+
+`html_text.c` uses NetSurf's Hubbub parser in token-handler mode with character
+decoding from ParserUtils. It omits `head`, `script`, and `style`, applies simple
+block and `pre` text formatting, and displays image `alt` text. It collects up
+to 64 HTTP(S) links, resolves relative paths against the first valid
+`<base href>` or the final page URL, and marks them with numbers in the
+document; the selected link opens with Enter. Hubbub's tree builder and DOM are
+not enabled, so this does not repair malformed document structure. There is no
+CSS layout, JavaScript, image loading, audio/video, form submission, tabs,
+bookmarks, downloads, cookies, or per-site permissions. Plain-text responses
+are also displayed. The URL parser lacks IDNA and complete percent
+canonicalization. The program is not sandboxed, so it has the normal user
+process's filesystem and network access.
+
+The TCP stack remains experimental: it uses stop-and-wait transmission, has no
+congestion control or out-of-order buffering, and does not yet have complete
+FIN handling. Runtime interoperability and packet-loss checks are still needed.
+See [BROWSER_READINESS.md](BROWSER_READINESS.md) for the implementation status
+and the remaining work before this prototype can be treated as a general-purpose
+browser.
 
 ## WeLoveC lightweight desktop
 

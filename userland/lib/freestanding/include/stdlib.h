@@ -12,6 +12,8 @@ void *calloc(size_t count, size_t size);
 void *realloc(void *memory, size_t size);
 void free(void *memory);
 _Noreturn void abort(void);
+void *bsearch(const void *key, const void *base, size_t count, size_t size,
+              int (*compare)(const void *, const void *));
 long strtol(const char *text, char **end, int base);
 unsigned long strtoul(const char *text, char **end, int base);
 

@@ -9,10 +9,10 @@
  * WeLoveC lightweight desktop - shared types and module interfaces.
  *
  * Design rules (they follow from what the kernel offers today):
- *  - The framebuffer is write-only and shared, so there is no back buffer and no
- *    per-window surface. The desktop keeps a *retained model* (window list, app
- *    state) and repaints any damaged rectangle back-to-front, clipped in
- *    software before every syscall.
+ *  - The desktop keeps a retained model (window list and app state), repaints
+ *    damaged rectangles back-to-front, and publishes each repaint as one
+ *    buffered framebuffer update. Windowed child programs draw into private
+ *    surfaces that the desktop composites into those updates.
  *  - Everything is static or short-lived (`mmap` scratch that is unmapped
  *    right away), so the resident footprint stays near the 64 KiB user stack
  *    plus a few tens of KiB of code and .bss.

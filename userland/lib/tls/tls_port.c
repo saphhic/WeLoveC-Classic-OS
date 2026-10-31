@@ -127,6 +127,27 @@ void *realloc(void *memory, size_t size) {
     return replacement;
 }
 
+void *bsearch(const void *key, const void *base, size_t count, size_t size,
+              int (*compare)(const void *, const void *)) {
+    const uint8_t *cursor = (const uint8_t *)base;
+    if ((!key && size) || (!base && count) || !compare) return 0;
+    while (count) {
+        const size_t middle = count / 2;
+        if (size && middle > SIZE_MAX / size) return 0;
+        const uint8_t *element = cursor + middle * size;
+        const int order = compare(key, element);
+        if (order < 0) {
+            count = middle;
+        } else if (order > 0) {
+            cursor = element + size;
+            count -= middle + 1;
+        } else {
+            return (void *)element;
+        }
+    }
+    return 0;
+}
+
 void *welovec_tls_calloc(size_t count, size_t size) {
     return calloc(count, size);
 }

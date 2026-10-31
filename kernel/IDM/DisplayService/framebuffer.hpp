@@ -42,6 +42,12 @@ typedef struct WelovecFramebufferTargetState {
     bool active;
 } WelovecFramebufferTargetState;
 
+typedef struct WelovecFramebufferRedirectState {
+    uint32_t *framebuffer;
+    uint64_t interrupt_flags;
+    bool active;
+} WelovecFramebufferRedirectState;
+
 enum welovec_framebuffer_font {
     WELOVEC_FB_FONT_SYSTEM16 = 0,
     WELOVEC_FB_FONT_SYSTEM8 = 1,
@@ -66,6 +72,13 @@ bool framebuffer_surface_blit(const WelovecFramebufferSurface *surface,
                               int32_t blit_width, int32_t blit_height);
 uint64_t framebuffer_surface_generation(
     const WelovecFramebufferSurface *surface);
+bool framebuffer_frame_begin(uint64_t owner, int32_t x, int32_t y,
+                             int32_t frame_width, int32_t frame_height);
+bool framebuffer_frame_end(uint64_t owner);
+void framebuffer_frame_cancel_owner(uint64_t owner);
+bool framebuffer_frame_redirect_begin(
+    uint64_t owner, WelovecFramebufferRedirectState *state);
+void framebuffer_frame_redirect_end(WelovecFramebufferRedirectState *state);
 void fb_set_scale(int scale);
 void fb_set_colors(uint32_t fg, uint32_t bg);
 int fb_get_cursor_x(void);

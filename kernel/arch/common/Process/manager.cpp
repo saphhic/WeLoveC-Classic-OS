@@ -621,6 +621,7 @@ bool terminate(uint64_t process_id, int64_t status) {
         process->state = State::Zombie;
     const bool close_descriptors = process->state == State::Zombie;
     gManager.lock.unlock_irqrestore(irq);
+    framebuffer_frame_cancel_owner(process_id);
     if (close_descriptors) welovec::filesystem::close_process_descriptors(process_id);
     if (terminate_now) welovec::x86_64::scheduler::terminate_group(process_id, status);
     return true;
