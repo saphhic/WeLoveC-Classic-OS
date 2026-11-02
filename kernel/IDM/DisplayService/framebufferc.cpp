@@ -235,7 +235,8 @@ bool framebuffer_surface_begin(WelovecFramebufferSurface *surface,
     return true;
 }
 
-void framebuffer_surface_end(WelovecFramebufferTargetState *state) {
+void framebuffer_surface_end(WelovecFramebufferTargetState *state,
+                             bool content_changed) {
     if (!state || !state->active) return;
     if (state->surface) {
         state->surface->cursor_x = fb_cursor_x;
@@ -243,7 +244,7 @@ void framebuffer_surface_end(WelovecFramebufferTargetState *state) {
         state->surface->scale = fb_char_scale;
         state->surface->foreground = fb_char_color;
         state->surface->background = fb_bg_color;
-        ++state->surface->generation;
+        if (content_changed) ++state->surface->generation;
     }
     framebuffer = state->framebuffer;
     width = state->width;
@@ -396,6 +397,9 @@ bool framebuffer_frame_end(uint64_t owner) {
     }
     copy_framebuffer_region(framebuffer, gFrameBuffer, gFrameX, gFrameY,
                             gFrameWidth, gFrameHeight);
+    /* GOP framebuffer pages are mapped write-combining; drain WC stores before
+       the transaction is released or the display can observe stale chunks. */
+    __asm__ volatile("sfence" ::: "memory");
     gFrameOwner = 0;
     gFrameX = gFrameY = 0;
     gFrameWidth = gFrameHeight = 0;
@@ -765,11 +769,13 @@ void draw_rect(int x, int y, int w, int h, uint32_t color) {
     int x0, y0, x1, y1;
     if (!clip_rect(x, y, w, h, &x0, &y0, &x1, &y1)) return;
 
+    const uint32_t pixel = to_framebuffer_pixel(color);
+    const uint32_t count = static_cast<uint32_t>(x1 - x0);
     for (int row = y0; row < y1; row++) {
-        uint32_t* line_ptr = (uint32_t*)((uint8_t*)framebuffer + (uint64_t)(uint32_t)row * pitch) + x0;
-        int count = x1 - x0;
-        const uint32_t pixel = to_framebuffer_pixel(color);
-        for (int i = 0; i < count; i++) line_ptr[i] = pixel;
+        auto *line = reinterpret_cast<uint32_t *>(
+            reinterpret_cast<uint8_t *>(framebuffer) +
+            static_cast<uint64_t>(static_cast<uint32_t>(row)) * pitch) + x0;
+        fill_framebuffer_pixels(line, pixel, count);
     }
 }
 
@@ -856,9 +862,12 @@ void draw_rect_vgradient(int x, int y, int w, int h, uint32_t top, uint32_t bott
         uint32_t b = (b_top * inv + b_bot * t) / 255;
         uint32_t color = 0xFF000000u | (r << 16) | (g << 8) | b;
 
-        uint32_t* line_ptr = (uint32_t*)((uint8_t*)framebuffer + (uint64_t)(uint32_t)row * pitch) + x0;
+        auto *line_ptr = reinterpret_cast<uint32_t *>(
+            reinterpret_cast<uint8_t *>(framebuffer) +
+            static_cast<uint64_t>(static_cast<uint32_t>(row)) * pitch) + x0;
         const uint32_t pixel = to_framebuffer_pixel(color);
-        for (int col = x0; col < x1; col++) line_ptr[col - x0] = pixel;
+        fill_framebuffer_pixels(line_ptr, pixel,
+                                static_cast<uint32_t>(x1 - x0));
     }
 }
 

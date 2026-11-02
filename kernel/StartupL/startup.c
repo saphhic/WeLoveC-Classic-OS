@@ -4,6 +4,7 @@
 
 #include "../arch/x86_64/io/console.h"
 #include "../IDM/DisplayService/framebuffer.hpp"
+#include "../IDM/DisplayService/gpu.hpp"
 #include "../filesystem/vfs.h"
 #include "../arch/x86_64/input/keyboard.h"
 #include "../arch/x86_64/input/mouse.h"
@@ -25,6 +26,35 @@ static int xhci_probe_pending(void) {
 
 void startup_main(const WelovecBootInfo *boot_info) {
     printf_fb_color("#kernel/StartupL/startup.c\n\n", FB_CYAN);
+
+    kernel_console_write("Initializing GPU driver framework and probing PCI.");
+    const WelovecGpuStatus gpu_status = welovec_gpu_initialize();
+    if (gpu_status != WELOVEC_GPU_OK) {
+        printf_fb_color(" [PROBE FRAMEWORK ERROR; UEFI DISPLAY LEFT ACTIVE]\n",
+                        FB_ORANGE);
+    } else {
+        WelovecGpuSystemInfo gpu_system = {0};
+        if (welovec_gpu_get_system_info(&gpu_system) != WELOVEC_GPU_OK) {
+            printf_fb_color(" [GPU STATUS UNAVAILABLE; UEFI DISPLAY LEFT ACTIVE]\n",
+                            FB_ORANGE);
+        } else if (gpu_system.device_count == 0) {
+            printf_fb_color(" [NO REGISTERED GPU MATCH; UEFI GOP LEFT ACTIVE]\n",
+                            FB_ORANGE);
+        } else {
+            WelovecGpuDeviceInfo gpu_device = {0};
+            if (welovec_gpu_get_device_info(0, &gpu_device) != WELOVEC_GPU_OK) {
+                printf_fb_color(" [DEVICE INFO UNAVAILABLE; UEFI GOP LEFT ACTIVE]\n",
+                                FB_ORANGE);
+            } else if (gpu_device.vendor_id == 0x1002 &&
+                       gpu_device.device_id == 0x1681) {
+                printf_fb_color(" [AMD REMBRANDT MATCHED; PASSIVE PCI PROBE; NATIVE INIT PENDING]\n",
+                                FB_GREEN);
+            } else {
+                printf_fb_color(" [GPU DRIVER MATCHED; NATIVE INIT PENDING]\n",
+                                FB_GREEN);
+            }
+        }
+    }
 
     kernel_console_write("Initializing filesystem.");
     if (welovec_filesystem_initialize(boot_info) == 1) {

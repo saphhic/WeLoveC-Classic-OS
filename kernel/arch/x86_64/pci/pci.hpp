@@ -20,6 +20,26 @@ struct Device {
     uint16_t device_id;
 };
 
+enum class BarType : uint8_t {
+    Absent,
+    Io,
+    MemoryBelow1MiB,
+    Memory32,
+    Memory64,
+    Continuation,
+    Reserved
+};
+
+struct Bar {
+    uint8_t index;
+    BarType type;
+    bool assigned;
+    bool prefetchable;
+    uint64_t address;
+};
+
+constexpr uint8_t kMaximumBars = 6;
+
 using Visitor = bool (*)(const Device &, void *);
 
 bool enumerate(Visitor visitor, void *context);
@@ -30,6 +50,9 @@ void write8(const Device &device, uint8_t offset, uint8_t value);
 void write16(const Device &device, uint8_t offset, uint16_t value);
 void write32(const Device &device, uint8_t offset, uint32_t value);
 uint64_t memory_bar_address(const Device &device, uint8_t index);
+/* Reads BAR layout without changing configuration space. A 64-bit BAR uses
+   the following entry as a Continuation slot. No BAR sizing probe is done. */
+bool read_bars(const Device &device, Bar out[kMaximumBars], uint8_t *out_count);
 bool enable_memory_and_bus_master(const Device &device);
 
 }

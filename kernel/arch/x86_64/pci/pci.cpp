@@ -141,6 +141,67 @@ uint64_t memory_bar_address(const Device &device, uint8_t index) {
     return result;
 }
 
+bool read_bars(const Device &device, Bar out[kMaximumBars], uint8_t *out_count) {
+    if (!out || !out_count) return false;
+    for (uint8_t i = 0; i < kMaximumBars; ++i)
+        out[i] = Bar{i, BarType::Absent, false, false, 0};
+
+    const uint64_t irq = gConfigLock.lock_irqsave();
+    const uint8_t header_type = static_cast<uint8_t>(
+        (read32_locked(device, 0x0c) >> 16) & 0x7f);
+    uint8_t bar_slots = 0;
+    switch (header_type) {
+        case 0: bar_slots = 6; break; // endpoint
+        case 1: bar_slots = 2; break; // PCI-to-PCI bridge
+        case 2: bar_slots = 1; break; // CardBus bridge
+        default:
+            *out_count = 0;
+            gConfigLock.unlock_irqrestore(irq);
+            return false;
+    }
+
+    for (uint8_t index = 0; index < bar_slots; ++index) {
+        const uint8_t offset = static_cast<uint8_t>(0x10 + index * 4);
+        const uint32_t low = read32_locked(device, offset);
+        if (low == 0) continue;
+
+        if (low & 1u) {
+            const uint64_t address = low & ~UINT32_C(0x3);
+            out[index] = Bar{index, BarType::Io, address != 0, false, address};
+            continue;
+        }
+
+        const uint8_t memory_type = static_cast<uint8_t>((low >> 1) & 3u);
+        const bool prefetchable = (low & (1u << 3)) != 0;
+        if (memory_type == 0) {
+            const uint64_t address = low & ~UINT32_C(0xf);
+            out[index] = Bar{index, BarType::Memory32, address != 0,
+                             prefetchable, address};
+        } else if (memory_type == 1) {
+            const uint64_t address = low & UINT32_C(0x000ffff0);
+            out[index] = Bar{index, BarType::MemoryBelow1MiB, address != 0,
+                             prefetchable, address};
+        } else if (memory_type == 2 && index + 1 < bar_slots) {
+            const uint32_t high = read32_locked(
+                device, static_cast<uint8_t>(offset + 4));
+            const uint64_t address =
+                (static_cast<uint64_t>(high) << 32) |
+                (low & ~UINT32_C(0xf));
+            out[index] = Bar{index, BarType::Memory64, address != 0,
+                             prefetchable, address};
+            ++index;
+            out[index] = Bar{index, BarType::Continuation, false, false, 0};
+        } else {
+            out[index] = Bar{index, BarType::Reserved, false,
+                             prefetchable, 0};
+        }
+    }
+
+    *out_count = bar_slots;
+    gConfigLock.unlock_irqrestore(irq);
+    return true;
+}
+
 bool enable_memory_and_bus_master(const Device &device) {
     const uint16_t command = read16(device, 0x04);
     write16(device, 0x04, static_cast<uint16_t>(command | (1u << 1) | (1u << 2)));

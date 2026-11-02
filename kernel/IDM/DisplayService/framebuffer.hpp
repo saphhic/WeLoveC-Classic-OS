@@ -65,7 +65,8 @@ bool framebuffer_surface_resize(WelovecFramebufferSurface *surface,
 void framebuffer_surface_destroy(WelovecFramebufferSurface *surface);
 bool framebuffer_surface_begin(WelovecFramebufferSurface *surface,
                                WelovecFramebufferTargetState *state);
-void framebuffer_surface_end(WelovecFramebufferTargetState *state);
+void framebuffer_surface_end(WelovecFramebufferTargetState *state,
+                             bool content_changed);
 bool framebuffer_surface_blit(const WelovecFramebufferSurface *surface,
                               int32_t dest_x, int32_t dest_y,
                               int32_t source_x, int32_t source_y,

@@ -51,6 +51,12 @@ $(OBJ_DIR)/%.cpp.o: ./%.cpp
 	@mkdir -p $(dir $@)
 	$(CLANGXX) $(CXXFLAGS) -MMD -MP -c $< -o $@
 
+# Framebuffer drawing is the CPU-only compositor's hottest path; optimize this
+# module while leaving the rest of the kernel easy to debug.
+$(OBJ_DIR)/IDM/DisplayService/framebufferc.cpp.o: ./IDM/DisplayService/framebufferc.cpp Makefile
+	@mkdir -p $(dir $@)
+	$(CLANGXX) $(CXXFLAGS) -O2 -MMD -MP -c $< -o $@
+
 # Password KDF work is intentionally expensive; optimize this crypto code even
 # in debug kernel builds so normal logins do not stall the whole machine.
 $(OBJ_DIR)/security/password_hash.cpp.o: ./security/password_hash.cpp Makefile

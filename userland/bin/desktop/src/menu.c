@@ -294,6 +294,7 @@ void app_launch(int action) {
     case ACT_TASKS: (void)wm_open(&app_tasks, 0); break;
     case ACT_SYSINFO: (void)wm_open(&app_sysinfo, 0); break;
     case ACT_CALC: (void)wm_open(&app_calc, 0); break;
+    case ACT_GEOMETRY: (void)wm_open(&app_geometry, 0); break;
     case ACT_RUN:
         dlg_prompt("Run program (name or /path.elf, then arguments):", "",
                    run_done, 0);
@@ -322,7 +323,7 @@ void app_launch(int action) {
 
 #define ICON_CELL_W 96
 #define ICON_CELL_H 84
-#define N_ICONS 6
+#define N_ICONS 7
 
 static const struct {
     const char *label;
@@ -330,6 +331,7 @@ static const struct {
 } k_icons[N_ICONS] = {
     {"Term", ACT_TERMINAL}, {"Files", ACT_FILES}, {"Edit", ACT_EDITOR},
     {"Tasks", ACT_TASKS},   {"Info", ACT_SYSINFO}, {"Calc", ACT_CALC},
+    {"Objetos", ACT_GEOMETRY},
 };
 
 static rect_t g_icon_cells[N_ICONS];
@@ -384,12 +386,23 @@ static void draw_icon_art(int i, int32_t x, int32_t y) {
         gfx_frame(x, y, 48, 48, C_WHITE);
         gfx_text(x + 16, y + 16, "i", C_WHITE);
         break;
-    default:
+    case 5:
         gfx_fill(x, y, 48, 48, UINT32_C(0xff303640));
         gfx_frame(x, y, 48, 48, C_WHITE);
         for (int32_t r = 0; r < 3; ++r)
             for (int32_t c = 0; c < 3; ++c)
-                gfx_fill(x + 6 + c * 14, y + 6 + r * 14, 10, 10, c == 2 ? C_WARN : C_BTN);
+                gfx_fill(x + 6 + c * 14, y + 6 + r * 14, 10, 10,
+                         c == 2 ? C_WARN : C_BTN);
+        break;
+    default:
+        gfx_fill(x, y, 48, 48, UINT32_C(0xff182331));
+        gfx_frame(x, y, 48, 48, C_WHITE);
+        gfx_frame(x + 9, y + 11, 27, 27, UINT32_C(0xff70d6dc));
+        gfx_frame(x + 15, y + 5, 27, 27, C_WARN);
+        gfx_fill(x + 7, y + 9, 6, 6, C_WHITE);
+        gfx_fill(x + 33, y + 3, 6, 6, C_WHITE);
+        gfx_fill(x + 34, y + 31, 6, 6, C_WHITE);
+        gfx_fill(x + 13, y + 37, 6, 6, C_WHITE);
         break;
     }
 }

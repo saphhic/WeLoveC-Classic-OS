@@ -1394,8 +1394,13 @@ int64_t sigaction_syscall(const syscall_regs_t *regs) {
 void syscall_dispatch(syscall_regs_t *regs) {
     if (!regs) return;
     const uint64_t syscall_number = regs->rax;
-    const bool framebuffer_operation =
-        (syscall_number >= SYS_FB_INFO && syscall_number <= SYS_FB_TEXT) ||
+    const bool console_output_operation = syscall_number == SYS_WRITE ||
+        (syscall_number == SYS_FD_WRITE &&
+         (regs->rdi == 1 || regs->rdi == 2));
+    const bool framebuffer_read_operation = syscall_number == SYS_FB_INFO;
+    const bool framebuffer_operation = console_output_operation ||
+        framebuffer_read_operation ||
+        (syscall_number >= SYS_FB_PIXEL && syscall_number <= SYS_FB_TEXT) ||
         syscall_number == SYS_FB_SCROLL_UP || syscall_number == SYS_PRINT ||
         syscall_number == SYS_PRINT_COLOR ||
         syscall_number == SYS_PRINT_RESET_CURSOR ||
@@ -1414,7 +1419,8 @@ void syscall_dispatch(syscall_regs_t *regs) {
     }
     WelovecFramebufferRedirectState framebuffer_redirect{};
     const bool framebuffer_redirect_active =
-        (framebuffer_operation || framebuffer_blit_operation) &&
+        ((framebuffer_operation && !framebuffer_read_operation) ||
+         framebuffer_blit_operation) &&
         framebuffer_frame_redirect_begin(welovec::process::current_id(),
                                           &framebuffer_redirect);
     switch (regs->rax) {
@@ -1809,7 +1815,8 @@ void syscall_dispatch(syscall_regs_t *regs) {
     }
 
     if (framebuffer_target_active)
-        framebuffer_surface_end(&framebuffer_target);
+        framebuffer_surface_end(&framebuffer_target,
+                                !framebuffer_read_operation);
     if (framebuffer_redirect_active)
         framebuffer_frame_redirect_end(&framebuffer_redirect);
 

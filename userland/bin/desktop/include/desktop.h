@@ -246,6 +246,7 @@ extern const struct app_ops app_editor;
 extern const struct app_ops app_tasks;
 extern const struct app_ops app_sysinfo;
 extern const struct app_ops app_calc;
+extern const struct app_ops app_geometry;
 extern const struct app_ops app_program;
 void app_program_reap(void);
 void app_program_wait_all(void);
@@ -272,6 +273,7 @@ enum {
     ACT_TASKS,
     ACT_SYSINFO,
     ACT_CALC,
+    ACT_GEOMETRY,
     ACT_RUN,
     ACT_EXIT,
     ACT_REBOOT,
