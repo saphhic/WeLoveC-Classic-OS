@@ -3,6 +3,9 @@
 Written by [@saphhic](https://github.com/saphhic)  \
 Date: October 31st 2026
 
+WeLoveC is a x86_64 UEFI operating system made by one person (me) it is still in it early stages
+but its now usable, the version is on 1.7 because this OS is older than this repo.
+
 Description: a single document containing the README guides for the WeLoveC Classic operating system.
 
 ## Contents
