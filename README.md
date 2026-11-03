@@ -1,12 +1,13 @@
 # WeLoveC Classic — unified documentation
 
 Written by [@saphhic](https://github.com/saphhic)  \
-Date: October 31st 2026
+Date: November 3rd 2026
 
-WeLoveC is a x86_64 UEFI operating system made by one person (me) it is still in it early stages
-but its now usable, the version is on 1.7 because this OS is older than this repo.
-
-Description: a single document containing the README guides for the WeLoveC Classic operating system.
+WeLoveC Classic is an x86-64 operating system that boots through UEFI. It
+includes a kernel, a freestanding userland, a lightweight desktop, and system
+call APIs for applications. This document describes the current implementation
+and its known limits. Focused guides cover the browser, editor, compiler port,
+GPU, and syscall interfaces.
 
 ## Contents
 
@@ -38,8 +39,6 @@ Source code, headers, configuration files, and build scripts contain the author,
 
 ## WeLoveC Classic build
 
-*Source: `README.md`.*
-
 Run these commands from the repository root:
 
 ```sh
@@ -50,9 +49,9 @@ make iso      # create build/WeLoveC-UEFI.iso with xorriso
 make clean
 ```
 
-Building userland requires `clang`, `cmake`, `tar`, `perl`, and `sha256sum` (or
-`shasum`). The pinned Mbed TLS source archive is hash-checked, built locally
-for the freestanding x86-64 target, and linked into the `install` command. The
+Building userland requires `clang`, `cmake`, `python3`, `tar`, `perl`, and
+`sha256sum` (or `shasum`). The pinned Mbed TLS source archive is hash-checked,
+built locally for the freestanding x86-64 target, and linked into the `install` command. The
 browser build extracts NetSurf's Hubbub HTML parser and ParserUtils library,
 then compiles them as static freestanding libraries without Iconv.
 
@@ -66,17 +65,16 @@ The ISO target creates a FAT EFI boot image, puts the loader, kernel, boot
 configuration, and FAT32 userland image in it, and asks `xorriso` to write the
 UEFI-bootable ISO. Startup loads the sample ring-3 `init.elf` from that image.
 User programs can use the syscall, filesystem, process, and security APIs in
-`kernel/include/user/`; the process section in this document describes implemented calls and current limits. Keyboard input is initialized by startup: PS/2 is probed
-directly, with USB HID and virtio-input protocol adapters under
-`kernel/arch/x86_64/input/`.
+`kernel/include/user/`; the process and syscall sections in this document
+describe implemented calls and current limits. Keyboard input is initialized
+by startup: PS/2 is probed directly, with USB HID and virtio-input protocol
+adapters under `kernel/arch/x86_64/input/`.
 
 The ISO build needs
 `xorriso`, `mkfs.fat` (from dosfstools), and `mcopy` plus `mmd` (from mtools).
 Override tool names with `XORRISO`, `MKFS_FAT`, `MCOPY`, and `MMD` if needed.
 
 ## WeLoveC UEFI boot manager
-
-*Source: `bootloader/README.md`.*
 
 This directory contains an x86_64 UEFI application. From this directory,
 `make` writes the removable-media fallback application to
@@ -175,8 +173,6 @@ can use their own linker setup as long as the resulting ELF follows the ABI abov
 
 ## startupd
 
-*Source: `kernel/StartupL/README.md`.*
-
 Before startupd runs, `startup.c` initializes security and checks whether the
 account database contains an administrator. On first boot it opens the kernel
 account setup screen, which accepts a username and masked password. User or
@@ -215,12 +211,11 @@ RAM filesystem for the current boot.
 
 ## Kernel memory management
 
-*Source: `kernel/arch/common/MM/README.md`.*
-
 `memory_manager_initialize()` consumes the versioned UEFI handoff before the
 kernel enables interrupts. It initializes the active x86_64 page-table view,
 the physical frame allocator, kernel virtual-memory arenas, and kernel heap.
-The current minimal kernel then halts; there is not yet a scheduler.
+The scheduler, process manager, and user address spaces use these memory
+services after initialization.
 
 ### PMM
 
@@ -253,8 +248,8 @@ one for PMM-backed kernel pages, and one for physical mappings. `map_physical()`
 defaults to uncached mappings for MMIO; `unmap_physical()` requires the exact
 returned pointer and requested size. `AddressSpace` can create isolated
 user-half roots while sharing the kernel mappings, allocate owned anonymous
-pages, switch CR3, and destroy its user mappings. No process or scheduler uses
-it yet.
+pages, switch CR3, and destroy its user mappings. User processes use this
+address-space support.
 
 ### Kernel heap
 
@@ -278,8 +273,6 @@ than `direct_map()`.
 
 ## Processes and user threads
 
-*Source: `kernel/arch/common/Process/README.md`.*
-
 The process manager owns a user page-table root and tracks process and thread
 lifetime. It is initialized after memory and the scheduler, before
 `scheduler_start()`. Kernel threads use process ID zero. User threads in one
@@ -295,16 +288,18 @@ apply page permissions, and start threads. ELF entry stacks use the SysV
 User programs enter through `SYSCALL`. The ABI and inline wrappers live in
 `include/user/syscall.h`; filesystem and process structures are in
 `include/user/filesystem.h` and `include/user/process.h`. Implemented calls
-cover process/thread exit and creation, yield/sleep, identity and capabilities,
-ELF exec, account queries, ticks, console output, file descriptors, anonymous
-memory, child wait/query, and process termination.
+cover process and thread management, ELF execution, account login and
+management, checked filesystem access and descriptors, anonymous memory,
+signals, framebuffer drawing and window surfaces, keyboard and pointer input,
+IPv4/IPv6 networking, UTC time, and system reboot or shutdown.
 
 Descriptors 0, 1, and 2 are keyboard input, stdout, and stderr. Open file
 descriptors are process-local, limited to 29 files per process and 128 across
-the kernel. `read`, `write`, and `seek` operate on these descriptors. Writable
-paths are restricted to `/home/user` and `/userspace`; writing elsewhere
-requires the system-configuration capability. VFS file I/O is limited to
-16 MiB per operation.
+the kernel. `read`, `write`, and `seek` operate on these descriptors. All
+sessions can write to shared `/tmp`; authenticated users can also write to
+their own `/home/<name>`. The system-configuration capability permits writes to
+other paths, except for account database files, which remain kernel-only. VFS
+file I/O is limited to 16 MiB per operation.
 
 `welovec_mmap()` creates zeroed read/write, non-executable memory, up to the
 free-page capacity reported from the boot-time UEFI memory map. If that capacity
@@ -328,76 +323,20 @@ against process capabilities. PIE and dynamic linking are not implemented.
 
 ## x86_64 Architecture Support
 
-*Source: `kernel/arch/x86_64/README.md`.*
+The kernel targets x86-64 systems started by the project's UEFI loader. The
+bootloader passes a versioned handoff with the memory map, framebuffer,
+firmware tables, and loaded modules. Limine and Multiboot boot paths are not
+implemented.
 
-Architecture support for the **x86_64** (64-bit) platform.
-
-Written by [@saphhic](https://github.com/saphhic)  
-Date: 29 July 2026
-
-### Overview
-
-This directory contains the x86_64 port of the kernel.  
-It is designed for **UEFI** systems and includes support for the **Limine** bootloader as well as Multiboot.
-
-### Features
-
------ Added July 26th ------
-- I/O ports
-- CPU Instructions
-- Control Registers
-- Model Specific Registers
-- CPU Discovery
-- Memory Ordering
-- RFLAGS
-- Interrupt Control
-- Syscall handler
-- Syscall Functions
-----------------------------
-
-### License
-
-This Directory is under GNU General Public License v3.0 Released on 2007.
-The license is as follows:
-
------------------------------------------------------------------------
-This program is free software: you can redistribute it and/or modify
-it under the terms of the GNU General Public License as published by
-the Free Software Foundation, version 3 of the License.
-
-This program is distributed in the hope that it will be useful,
-but WITHOUT ANY WARRANTY; without even the implied warranty of
-MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-GNU General Public License for more details.
-
-You should have received a copy of the GNU General Public License
-along with this program.  If not, see <https://www.gnu.org/licenses/>.
------------------------------------------------------------------------
-
-To see the full license check the [GNU General Public License v3.0](https://www.gnu.org/licenses/gpl-3.0.html) file.
-
-### Note [IMPORTANT]
-
-In the boot folder when bootloader is added a boot.asm file is needed, and in the mm folder goes functions such as paging or vmm, keep this in mind. when adding something to x86_64.
-
-The x86 is written in C++, theres no specific reason as to why, i (saphhic) am just used to write files in C++ so all of the C++ files CAN be changed to C files whitout breaking anything, this is because none of these scripts contains C++ memory maneging functions.
-
-The Assembler code is writen in GAS sintax, in the future if you reading this, plan to make a linker script or a Makefile for the whole kernel or OS keep that in mind.
-
-### Contact
-
-If you encounter any issues whit my code feel free to change it, fix it or directly contact me,
-i would aprecieate a lot the feedback!
-
---------------------------------------------------------
-- Email: <thbichosecundario@gmail.com>
-- Github: [@saphhic](https://github.com/saphhic)
-- Project Repository: (https://github.com/Dynt-Project)
---------------------------------------------------------
+Architecture code provides CPU register and I/O helpers, interrupt and syscall
+entry, page-table operations, context switching, and timer support. The current
+kernel is single-CPU and uses the legacy PIC and PIT; SMP scheduling, AVX/XSAVE
+context state, and migration between CPUs are not implemented. Assembly uses
+GAS syntax. Kernel C++ is built with the project's freestanding runtime and is
+not interchangeable with C without checking each translation unit's ABI and
+dependencies.
 
 ## ELF64 execution core
-
-*Source: `kernel/arch/x86_64/exec/README.md`.*
 
 The kernel exposes `welovec_exec_launch_elf64()` in `elf_loader.h`. It reads an
 executable through the VFS, validates its ELF headers, creates a process/address
@@ -442,8 +381,6 @@ executable path. Use the process manager API to query, terminate, and destroy a
 process after it exits.
 
 ## Keyboard and pointing-device input
-
-*Source: `kernel/arch/x86_64/input/README.md`.*
 
 Keyboard transports normalize keys to USB HID usages and feed the shared
 character queue. Pointing-device transports normalize motion and button state
@@ -534,8 +471,6 @@ Keyboard text conversion remains the fixed US QWERTY layout.
 
 ## x86_64 scheduler
 
-*Source: `kernel/arch/x86_64/scheduler/README.md`.*
-
 The scheduler provides preemptive kernel and user threads with four MLFQ priority
 levels, FIFO queues per level, time-slice demotion, periodic priority boosts,
 tick-based sleep, explicit block/wake, yield, and deferred reclamation of
@@ -555,8 +490,6 @@ not migrate tasks across CPUs, save AVX/XSAVE state, or implement Linux's full
 wait queues and resource policies.
 
 ## Filesystem layer
-
-*Source: `kernel/filesystem/README.md`.*
 
 The kernel initializes the block-device registry, probes for a FAT32 volume,
 and then initializes the VFS from `kernel_main`. The in-memory VFS stays at
@@ -600,13 +533,14 @@ for FAT files; new code should use the ownership-explicit API.
 The block interface is ready for additional drivers, but the current physical
 disk driver handles legacy IDE-compatible ATA PIO only. NVMe, AHCI, virtio-blk,
 USB mass storage, and kernel access through UEFI Block I/O are not implemented.
-The VFS does not yet expose file descriptors, permissions, symlinks, or async
-I/O. Unicode LFN data is stored correctly; non-ASCII name comparisons are
-byte-exact while ASCII comparisons ignore case.
+User programs access VFS files through process-local file descriptors and
+checked filesystem syscalls. The kernel enforces path access rules using the
+process identity and capabilities, although persistent per-file ownership
+metadata is not implemented. Symlinks and asynchronous file I/O are also not
+implemented. Unicode LFN data is stored correctly; non-ASCII name comparisons
+are byte-exact while ASCII comparisons ignore case.
 
 ## Users, passwords, and privileges
-
-*Source: `kernel/security/README.md`.*
 
 The kernel keeps a process identity (UID, GID, capabilities) and an
 authentication bit for its login session. New processes begin as `guest`
@@ -706,8 +640,6 @@ database format can be extended when a memory-hard KDF is available.
 
 ## Userland programs
 
-*Source: `userland/README.md`.*
-
 The root `make iso` target builds the freestanding x86-64 user programs and puts
 them in a FAT32 image mounted by the kernel at `/userspace`. `startupd` launches
 `init.elf` as `guest`; init checks the VFS, prompts for the saved account's
@@ -718,13 +650,13 @@ The image exposes `bootloader`, `kernel`, and `userland` as sibling paths to
 when it restarts the shell after `exit`.
 
 Programs include headers from `kernel/include/user/`. Syscalls return a result
-or a negative errno. The framebuffer, keyboard, IPv4/TCP, filesystem, process,
-and account APIs are described in [SYSCALLS.md](userland/SYSCALLS.md).
+or a negative errno. The framebuffer, keyboard, IPv4/IPv6, filesystem, process,
+and account APIs are described in [SYSCALLS.md](dev_info/SYSCALLS.md).
 The user ELF startup passes `argc` and `argv` to `userland_main`, runs
 preinitializers and C/C++ constructors before it, and runs finalizers if the
 program returns. The linker keeps exception tables in the executable. These
 ABI pieces prepare for C++ programs; the userland C++ standard library and
-exception runtime are not provided yet. See [CLANG_COMPILER.md](CLANG_COMPILER.md)
+exception runtime are not provided yet. See [CLANG_COMPILER.md](dev_info/CLANG_COMPILER.md)
 for the compiler port status.
 
 ### Shell layout
@@ -850,13 +782,11 @@ process's filesystem and network access.
 The TCP stack remains experimental: it uses stop-and-wait transmission, has no
 congestion control or out-of-order buffering, and does not yet have complete
 FIN handling. Runtime interoperability and packet-loss checks are still needed.
-See [BROWSER_READINESS.md](BROWSER_READINESS.md) for the implementation status
+See [BROWSER_READINESS.md](dev_info/BROWSER_READINESS.md) for the implementation status
 and the remaining work before this prototype can be treated as a general-purpose
 browser.
 
 ## WeLoveC lightweight desktop
-
-*Source: `userland/bin/desktop/README.md`; an identical copy also existed in `userland/bin/desktop_addon/userland/bin/desktop/README.md`.*
 
 A single desktop ELF (`/userspace/bin/desktop/desktop.elf`) shares the same
 format as `userland/bin/shell`; the root Makefile discovers it automatically.
@@ -881,7 +811,7 @@ others), and Programs lists up to six applications at
 The taskbar includes a UTC clock. The menu launches Terminal, Files, Editor,
 Code, Task Manager, System Info, Calculator, Geometry, Run..., restart, and
 shutdown. Code opens as `/userspace/bin/code/code.elf`; see
-[`CODE_EDITOR.md`](CODE_EDITOR.md) for its guide.
+[`CODE_EDITOR.md`](dev_info/CODE_EDITOR.md) for its guide.
 
 ### Memory
 No back buffer for the desktop: preserves state and redraws only damaged regions.

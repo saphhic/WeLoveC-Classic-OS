@@ -1,11 +1,13 @@
 <!-- Written by [@saphhic](https://github.com/saphhic) -->
-<!-- Date: October 31st 2026 -->
+<!-- Date: November 3rd 2026 -->
 <!-- Description: Documents the system call API available to user-space programs. -->
 
 # Userland system-call API
 
-User programs include headers from `kernel/include/user/`. The wrappers issue
-the `syscall` instruction and return either a result or a negative errno value.
+User programs include headers from `kernel/include/user/`. The syscall number
+is passed in `RAX`; up to six arguments use `RDI`, `RSI`, `RDX`, `R10`, `R8`,
+and `R9`, in that order. The wrappers issue the `syscall` instruction and
+return either a result or a negative errno value. `RCX` and `R11` are clobbered.
 Pointer arguments are copied and checked by the kernel; user programs do not
 receive kernel addresses.
 
@@ -50,9 +52,10 @@ Available wrappers are `welovec_fb_get_info`, `welovec_fb_pixel`,
 `welovec_fb_scroll_up` shifts a checked rectangle upward and fills the exposed
 rows with the supplied color. Each drawing syscall is limited to 16 Mi pixels.
 
-The API deliberately does not expose the framebuffer address, `framebuffer_init`,
-or the kernel console's global cursor/color setters and `printf_fb` state. Apps
-draw through checked operations rather than writing physical memory.
+The API does not expose the framebuffer address or `framebuffer_init`; apps
+draw through checked operations rather than writing physical memory. The
+`printf_fb` convenience library keeps its own cursor. The `welovec_print*()`
+and `welovec_print_cursor_*()` syscalls use the kernel framebuffer text cursor.
 `welovec_fb_frame_begin(x, y, width, height)` starts a buffered update for a
 screen region, and `welovec_fb_frame_end()` publishes it. Always end a frame
 after drawing; process termination cancels an unfinished frame.
@@ -85,9 +88,10 @@ Print helpers return the number of text bytes or a negative errno. Clear helpers
 return zero on success or a negative errno. The `welovec_`-prefixed variants
 expose the same API. `clear_screen_color(color)` fills the whole framebuffer in
 bounded rectangles and resets this library's cursor.
-Clearing and drawing still affect the one shared framebuffer: there is no
-per-process surface or display isolation, so a clear can erase the kernel
-console or another program's drawing. `welovec_fb_print_set_cursor(x, y)` sets
+For ordinary processes, clearing and drawing affect the shared framebuffer, so
+a clear can erase the kernel console or another program's drawing. A child
+started with `EXEC_WINDOWED` draws on its private surface, which the desktop
+composites into the window. `welovec_fb_print_set_cursor(x, y)` sets
 the library cursor in pixel coordinates; `welovec_fb_print_reset_cursor()`
 returns it to the default margin on the next print.
 
@@ -112,9 +116,13 @@ static void terminal_read_once(void) {
 }
 ```
 
-Input is currently one global character queue shared by processes. A foreground
-process/focus manager and per-process event queues are still needed before this
-is suitable for a multi-user desktop with mutually untrusted apps.
+Ordinary processes read from the shared keyboard queue. Windowed children read
+from private input queues populated by their desktop parent. For nonblocking
+input, `welovec_input_poll()` returns up to 256 available characters;
+`welovec_pointer_poll()` returns up to 32 pointer events. Both return zero when
+their queue is empty. `welovec_pointer_sources()` reports the detected pointer
+source mask, and `welovec_input_forward()` lets the parent desktop send
+characters and pointer events to a windowed child it owns.
 
 ## Network access
 
@@ -185,8 +193,9 @@ can be treated as production-ready.
 
 ## Syscall number list
 
-All IDs currently implemented by `syscall_dispatch.cpp` are listed here.
-Unless specified otherwise, failures return `-errno`.
+The table covers the current syscall ABI. IDs 13 and 14 are reserved and return
+`-ENOSYS`; the other listed IDs are implemented. Unless specified otherwise,
+failures return `-errno`.
 
 | ID | Name | Purpose / arguments |
 |---:|---|---|
@@ -203,8 +212,8 @@ Unless specified otherwise, failures return `-errno`.
 | 10 | `HAS_CAPABILITY` | `RDI=capability`; return 1 or 0. |
 | 11 | `EXEC` | Execute ELF as caller; path, argv, argc, priority in `RDI`,`RSI`,`RDX`,`R10`. |
 | 12 | `EXEC_ADMIN` | Execute ELF as administrator; requires `EXEC_AS_ADMIN`. |
-| 13 | `USER_QUERY` | `RDI=uid`, `RSI=user record output`. |
-| 14 | `USER_ADD` | `RDI=name`, `RSI=uid`; requires `MANAGE_USERS`. |
+| 13 | `RESERVED_13` | Reserved; returns `-ENOSYS`. |
+| 14 | `RESERVED_14` | Reserved; returns `-ENOSYS`. |
 | 15 | `EXEC_AS_USER` | Execute as an existing UID; requires `MANAGE_USERS` and any added capabilities. |
 | 16 | `FS_EXISTS` | `RDI=path`; return 1 if present, else 0. |
 | 17 | `FS_STAT` | `RDI=path`, `RSI=file info output`. |
@@ -214,12 +223,12 @@ Unless specified otherwise, failures return `-errno`.
 | 21 | `FS_MKDIR` | Create directory; `RDI=path`. |
 | 22 | `FS_UNLINK` | Remove file; `RDI=path`. |
 | 23 | `GETTICKS` | Return scheduler tick count. |
-| 24 | `READ` | Read descriptor; `RDI=fd`, `RSI=buffer`, `RDX=size`; fd 0 is blocking keyboard input. |
+| 24 | `READ` | Read descriptor; `RDI=fd`, `RSI=buffer`, `RDX=size`; fd 0 blocks for keyboard input or a windowed child's private input. |
 | 25 | `FD_WRITE` | Write descriptor; `RDI=fd`, `RSI=buffer`, `RDX=size`. |
 | 26 | `OPEN` | Open VFS path; `RDI=path`, `RSI=flags`; returns descriptor. |
 | 27 | `CLOSE` | Close descriptor; `RDI=fd`. |
 | 28 | `SEEK` | Seek descriptor; `RDI=fd`, `RSI=offset`, `RDX=SET/CUR/END`. |
-| 29 | `MMAP` | Map anonymous user memory; `RDI=size` (maximum 64 MiB). |
+| 29 | `MMAP` | Map anonymous user memory; `RDI=size`, limited by boot-time free-page capacity and current available memory (500 MiB fallback if capacity is unavailable). |
 | 30 | `MUNMAP` | Unmap user range; `RDI=address`, `RSI=size`. |
 | 31 | `WAITPID` | Wait for child; `RDI=pid`, `RSI=status pointer`, `RDX=options`. |
 | 32 | `PROCESS_QUERY` | Query process; `RDI=pid`, `RSI=process info output`. |
@@ -245,15 +254,51 @@ Unless specified otherwise, failures return `-errno`.
 | 52 | `NET_TCP_RECV` | `RDI=socket`, `RSI=output`, `RDX=capacity` (maximum 1400, nonblocking; polls once). |
 | 53 | `NET_TCP_CLOSE` | Close process-owned TCP handle; `RDI=socket`. |
 | 54 | `FB_SCROLL_UP` | `RDI=x`, `RSI=y`, `RDX=w`, `R10=h`, `R8=rows`, `R9=fill color`; region limited to 16 Mi pixels. |
+| 55 | `LOGIN` | Authenticate the current process; `RDI=username`, `RSI=password`. |
+| 56 | `LOGOUT` | End the current login session and restore guest credentials. |
+| 57 | `USER_STATUS` | Copy current login status to the structure at `RDI`. |
+| 58 | `USER_CREATE` | Create an account; `RDI=username`, `RSI=password`, `RDX=flags`; requires account-management permission. |
+| 59 | `USER_LIST` | Copy account records to `RDI`; `RSI=capacity`. A null pointer and zero capacity query the count. |
+| 60 | `PRINT` | Print a NUL-terminated string using the kernel framebuffer cursor; `RDI=text`, `RSI=optional font name`. |
+| 61 | `PRINT_COLOR` | Print a NUL-terminated string with a color; `RDI=text`, `RSI=ARGB color`, `RDX=optional font name`. |
+| 62 | `PRINT_RESET_CURSOR` | Reset the kernel framebuffer text cursor. |
+| 63 | `RTC_UTC` | Copy UTC date and time to the structure at `RDI`. |
+| 64 | `SYSTEM_REBOOT` | Reboot; `RDI=1` selects the virtual-machine method, `0` the hardware method. |
+| 65 | `SYSTEM_SHUTDOWN` | Shut down; `RDI=1` selects the virtual-machine method, `0` the hardware method. |
+| 66 | `FS_MOVE` | Move a file; `RDI=source path`, `RSI=destination path`. |
+| 67 | `SECURE_RANDOM` | Fill `RDI=buffer` with `RSI=size` secure random bytes (maximum 256); returns `-ENODEV` if no secure source is available. |
+| 68 | `NET_DNS_IPV6` | Resolve a hostname to an IPv6 address; `RDI=hostname`, `RSI=16-byte output`. |
+| 69 | `NET_TCP_CONNECT_IPV6` | Connect to IPv6; `RDI=16-byte address`, `RSI=port`; returns a process-owned socket handle. |
+| 70 | `NET_IPV6_INFO` | Copy IPv6 configuration to the structure at `RDI`. |
+| 71 | `PRINT_CURSOR_GET` | Copy the kernel framebuffer text cursor coordinates to `RDI`. |
+| 72 | `PRINT_CURSOR_SET` | Set text cursor coordinates; `RDI=x`, `RSI=y`. |
+| 73 | `PRINT_SCROLLBACK` | `RDI=direction`: 1 older output, -1 newer, 0 live output. Returns 1 if the view changed. |
+| 74 | `INPUT_POLL` | Nonblocking keyboard read; `RDI=buffer`, `RSI=capacity` (maximum 256). Uses the window's private queue when available. |
+| 75 | `POINTER_POLL` | Nonblocking pointer-event read; `RDI=events`, `RSI=capacity` (maximum 32). Uses the window's private queue when available. |
+| 76 | `POINTER_SOURCES` | Return the detected pointer-source bitmask. |
+| 77 | `EXEC_WINDOWED` | Start a child with a private framebuffer and input queue; `RDI=path`, `RSI=argv`, `RDX=argc`, `R10=priority`, `R8=width`, `R9=height`. |
+| 78 | `FB_SURFACE_BLIT` | Copy a child surface into the caller's framebuffer; `RDI=pid`, `RSI=dest x`, `RDX=dest y`, `R10=source x`, `R8=source y`, `R9=(width<<32)|height`. |
+| 79 | `FB_SURFACE_RESIZE` | Resize an owned child's surface; `RDI=pid`, `RSI=width`, `RDX=height`. |
+| 80 | `INPUT_FORWARD` | Forward child input; `RDI=pid`, `RSI=characters`, `RDX=character count` (max 255), `R10=pointer events`, `R8=event count` (max 15). |
+| 81 | `FB_SURFACE_GENERATION` | Return the generation number for an owned child surface; `RDI=pid`. |
+| 82 | `TERMINATE_WINDOWED_TREE` | Terminate an owned windowed child and its descendants; `RDI=pid`, `RSI=status`. |
 | 83 | `FB_FRAME_BEGIN` | Buffer a clipped screen region; `RDI=x`, `RSI=y`, `RDX=width`, `R10=height`. |
 | 84 | `FB_FRAME_END` | Publish the current buffered region; no arguments. |
 | 85 | `FS_LIST_RANGE` | `RDI=directory`, `RSI=entries`, `RDX=capacity` (maximum 32), `R10=entry offset`. |
 
 `FS_LIST_RANGE` pages through a directory without changing the existing
-`FS_LIST` behavior. Advance the offset by the number of entries returned until
-the call returns fewer entries than the requested capacity. The `apps` shell
-command uses this interface while recursively scanning directories for ELF
-files.
+`FS_LIST` behavior. Its capacity is at most 32 entries. Advance the offset by
+the number of entries returned until the call returns fewer entries than the
+requested capacity. The `apps` shell command uses this interface to recursively
+find and list ELF files across the VFS.
+
+Descriptors 0, 1, and 2 are standard input, output, and error. Each process can
+open up to 29 additional files, with a kernel-wide limit of 128 open files.
+Whole-file `FS_READ` and `FS_WRITE` operations are limited to 16 MiB per call.
+Filesystem access checks use the caller's identity and capabilities. All
+sessions may write under shared `/tmp`; authenticated users may also write in
+their own `/home/<name>`. The system-configuration capability permits other
+write paths, except that account database files remain kernel-only.
 
 ## Return-value convention
 

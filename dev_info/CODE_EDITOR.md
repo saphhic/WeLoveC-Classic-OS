@@ -22,5 +22,6 @@ Delete, so file operations use the toolbar.
 
 Code is a compact editor rather than a full Visual Studio Code replacement. It
 does not provide project workspaces, extensions, compiler integration,
-debugging, or language servers. The explorer displays the first 32 entries in
-a directory, matching the current filesystem list API limit.
+debugging, or language servers. The explorer currently displays the first 32
+entries in a directory. The filesystem API also provides `FS_LIST_RANGE` for
+programs that need to page through larger directories.

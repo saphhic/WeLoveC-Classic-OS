@@ -1,5 +1,5 @@
 # Written by [@saphhic](https://github.com/saphhic)
-# Date: October 30th 2026
+# Date: November 3rd 2026
 # Description: Coordinates builds for the kernel, bootloader, user programs, and ISO image.
 
 SHELL := /bin/sh
@@ -496,7 +496,7 @@ help:
 	@printf 'make userland    Build apps, Mbed TLS, NetSurf HTML parsing, and the FAT32 userspace image.\n'
 	@printf 'make iso         Create a UEFI-bootable ISO with xorriso.\n'
 	@printf 'make clean       Remove all generated build files.\n'
-	@printf 'Build tools: clang, CMake, tar, xorriso, mkfs.fat, mtools (mcopy and mmd).\n'
+	@printf 'Build tools: clang, CMake, Python 3, tar, perl, SHA-256 utility, xorriso, mkfs.fat, mtools.\n'
 
 clean:
 	$(MAKE) -C kernel clean

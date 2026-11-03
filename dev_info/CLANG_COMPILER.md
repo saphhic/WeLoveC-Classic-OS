@@ -1,5 +1,14 @@
 # Native Clang compiler
 
+## Current status
+
+There is no Clang compiler ELF installed in WeLoveC yet. The repository's
+Makefiles use the build machine's `clang` and `clang++` to create userland
+programs. The work already present in the user ELF startup supports C++
+initializers and finalizers and retains unwind metadata, but it does not provide
+a C++ standard library, exception runtime, or in-system compiler command. This
+guide describes the port requirements and target design.
+
 ## Goal
 
 Provide a shell command implemented as a WeLoveC userland ELF. The command
