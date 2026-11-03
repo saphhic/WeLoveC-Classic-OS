@@ -421,12 +421,12 @@ static void draw(struct window *w, rect_t c) {
     d_strcat(caption, sizeof(caption), "D");
     gfx_text(canvas.x + 12, canvas.y + 10, caption, C_WHITE);
     gfx_text(canvas.x + 12, canvas.y + 30,
-             "Arrastra para girar (vista 3D)", UINT32_C(0xffaebdca));
+             "Drag to rotate (3D view)", UINT32_C(0xffaebdca));
 
     const rect_t reset = reset_button(c);
     gfx_fill(reset.x, reset.y, reset.w, reset.h, C_PANEL_HI);
     gfx_frame(reset.x, reset.y, reset.w, reset.h, C_SHADOW);
-    gfx_text(reset.x + 10, reset.y + 5, "Reiniciar", C_WHITE);
+    gfx_text(reset.x + 10, reset.y + 5, "Reset", C_WHITE);
     draw_model(s, canvas);
 
     const rect_t minus = dimension_minus(c);
@@ -586,6 +586,6 @@ static int key(struct window *w, int value) {
 }
 
 const struct app_ops app_geometry = {
-    "Objetos", 720, 520, 520, 360, 1,
+    "Geometry", 720, 520, 520, 360, 1,
     open, 0, 0, draw, mouse, key, 0, 0, 0, 0,
 };

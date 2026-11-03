@@ -261,16 +261,16 @@ void welovec_tls_close(struct welovec_tls_session *session) {
 
 const char *welovec_tls_error_description(int error) {
     if (error == PSA_ERROR_INSUFFICIENT_ENTROPY || error == 148)
-        return "no hay entropia criptografica; habilita EFI RNG, RDSEED/RDRAND o conecta un dispositivo virtio-rng a la VM";
+        return "no cryptographic entropy; enable EFI RNG or RDSEED/RDRAND, or attach a virtio-rng device to the VM";
     if (error == PSA_ERROR_INVALID_SIGNATURE || error == 149)
-        return "la firma criptografica recibida no coincide; el certificado o la cadena enviados por el servidor pueden estar corruptos o ser incompatibles";
+        return "the received cryptographic signature does not match; the server certificate or chain may be corrupt or incompatible";
     if (error == MBEDTLS_ERR_X509_FILE_IO_ERROR || error == 10496)
-        return "no se pudo leer /userland/certs/ca-bundle.pem";
+        return "could not read /userland/certs/ca-bundle.pem";
     if (error == MBEDTLS_ERR_X509_INVALID_FORMAT)
-        return "el archivo de certificados CA tiene un formato incorrecto o está incompleto";
+        return "the CA certificate bundle is malformed or incomplete";
     if (error == MBEDTLS_ERR_X509_CERT_VERIFY_FAILED)
-        return "el certificado no supera la validacion de confianza o nombre del servidor";
+        return "the certificate failed trust-chain or server-name validation";
     if (error == MBEDTLS_ERR_SSL_TIMEOUT)
-        return "se agotó el tiempo de espera durante la negociacion TLS";
+        return "the TLS handshake timed out";
     return 0;
 }

@@ -190,9 +190,9 @@ static int dirty(struct window *w) {
         s->pending_draw = 1;
     }
     /* Coalesce rapid terminal writes before copying the full window surface.
-       At 100 Hz this caps redraws near 20 fps and keeps help/list output from
+       At 100 Hz this caps redraws near 33 fps while keeping large output from
        monopolizing the desktop compositor. */
-    if (!s->pending_draw || g_desk.now - s->last_draw_tick < 5) return 0;
+    if (!s->pending_draw || g_desk.now - s->last_draw_tick < 3) return 0;
     s->pending_draw = 0;
     s->last_draw_tick = g_desk.now;
     return 1;

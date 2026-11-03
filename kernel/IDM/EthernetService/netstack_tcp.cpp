@@ -107,7 +107,7 @@ static uint16_t tcp_checksum(const uint8_t* src, const uint8_t* dst,
     return static_cast<uint16_t>(~acc);
 }
 
-// ── Estado de conexión ─────────────────────────────────────
+// ── Connection state ────────────────────────────────────────
 
 enum TcpState : uint8_t {
     TCP_CLOSED=0, TCP_SYN_SENT, TCP_ESTABLISHED, TCP_FIN_WAIT, TCP_TIME_WAIT
@@ -178,16 +178,16 @@ static bool tcp_allocate_ephemeral_port(uint16_t random_value,
     return false;
 }
 
-// ── Envío de segmento TCP+IP ───────────────────────────────
+// ── TCP/IP segment transmission ────────────────────────────
 
 static bool tcp_send_seg_at(TcpConn* c, uint8_t flags,
                             const uint8_t* payload, uint16_t plen,
                             uint32_t sequence) {
-    // Calcular el espacio libre en el buffer de recepción para anunciarlo (control de flujo)
+    // Advertise available receive-buffer space for TCP flow control.
     int free_space = tcp_recv_buf_free_space(c);
     uint16_t window_size = (free_space > 0) ? static_cast<uint16_t>(free_space) : 0;
 
-    // Construir segmento TCP (sin opciones)
+    // Build a TCP segment without options.
     const uint16_t seg_len = static_cast<uint16_t>(kTcpHdrLen + plen);
     uint8_t seg[kTcpHdrLen + kMSS];
     if (plen > kMSS) return false;
@@ -198,7 +198,7 @@ static bool tcp_send_seg_at(TcpConn* c, uint8_t flags,
     write_be32(&seg[8],  c->ack);
     seg[12] = static_cast<uint8_t>((kTcpHdrLen/4) << 4);
     seg[13] = flags;
-    write_be16(&seg[14], window_size); // Anunciar nuestra ventana de recepción
+    write_be16(&seg[14], window_size); // Advertise the receive window.
     if (payload && plen) memcpy(&seg[kTcpHdrLen], payload, plen);
     uint16_t checksum = tcp_checksum(c->local_ip, c->remote_ip, seg,
                                      seg_len, c->ipv6);
@@ -343,9 +343,9 @@ void tcp_handle_packet(const ethernet_packet* pkt) {
                 }
             }
 
-            // Solo aceptar el segmento esperado para evitar reordenamiento simple
+            // Accept only the expected segment to avoid basic reordering.
             if (seq != c->ack) {
-                // Si no es el esperado, al menos enviamos un ACK para que el otro lado sepa qué esperamos
+                // If it is unexpected, at least send an ACK to report what we expect.
                 tcp_send_seg(c, kTcpFlagACK, nullptr, 0);
                 return;
             }
@@ -381,11 +381,11 @@ void tcp_handle_packet(const ethernet_packet* pkt) {
 // ── Polling ────────────────────────────────────────────────
 
 void tcp_poll() {
-    // La netstack posee la cola RX y distribuye los paquetes TCP.
+    // The network stack owns the RX queue and dispatches TCP packets.
     netstack_poll();
 }
 
-// ── API pública ────────────────────────────────────────────
+// ── Public API ──────────────────────────────────────────────
 
 static int tcp_connect_resolved(const uint8_t source_ip[16],
                                 const uint8_t dest_ip[16],
@@ -581,8 +581,7 @@ int tcp_recv(int id,
                 % TCP_RECV_BUF_SIZE;
         }
 
-        // Si ya hemos copiado datos al buffer del usuario, retornamos inmediatamente.
-        // La aplicación puede volver a llamar a tcp_recv si necesita más datos.
+        // Return immediately if data has already been copied to the user buffer.
         if (got > 0) {
             /* Reading data opens receive-window space.  Advertise it now so
                peers that stopped at a zero window can resume promptly. */

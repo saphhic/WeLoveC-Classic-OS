@@ -27,5 +27,7 @@ bool fat32_make_directory(const char *path);
 bool fat32_delete(const char *path);
 bool fat32_move(const char *old_path, const char *new_path);
 int fat32_list(const char *path, VfsListEntry *out_entries, int max_entries);
+int fat32_list_range(const char *path, VfsListEntry *out_entries,
+                     int max_entries, uint64_t offset);
 
 #endif

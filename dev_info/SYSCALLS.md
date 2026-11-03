@@ -11,11 +11,13 @@ receive kernel addresses.
 
 ## Framebuffer and desktop drawing
 
-Include `user/framebuffer.h`. The framebuffer is a shared device, so raw drawing
-calls can draw over pixels another program has drawn. Calls are clipped to the
-screen and drawing requests are bounded to 16 Mi pixels per call; text is
-limited to 4096 bytes. Colors use `0xAARRGGBB` (`welovec_fb_rgb()` creates
-opaque colors). The desktop batches each damaged region with
+Include `user/framebuffer.h`. Regular processes draw to the shared framebuffer,
+so their drawing calls can overwrite pixels another program has drawn. A child
+started with `EXEC_WINDOWED` instead draws into a process-owned surface that
+the desktop composites into its window. Calls are clipped to the active surface
+and drawing requests are bounded to 16 Mi pixels per call; text is limited to
+4096 bytes. Colors use `0xAARRGGBB` (`welovec_fb_rgb()` creates opaque colors).
+The desktop batches each damaged region with
 `welovec_fb_frame_begin()` and `welovec_fb_frame_end()`, so its drawing commands
 are published together instead of appearing one primitive at a time. Other
 programs can use the same pair; if the kernel cannot allocate its screen-sized
@@ -121,9 +123,10 @@ DNS A/AAAA lookups, and a small process-owned TCP interface. No raw Ethernet
 frames, DMA buffers, PCI/MMIO addresses, or driver controls are exposed. DNS
 requests use the configured IPv4 DNS server. TCP has at most eight kernel
 connections system-wide, allows up to 1400 bytes per send or receive call, and
-receive is nonblocking (zero means no data queued yet). Each receive call polls
-the network stack once and then drains queued bytes; it must not skip the poll
-or it can leave newly arrived TCP data unread.
+receive is nonblocking (zero means no data queued yet). Each receive call,
+including one with zero capacity, polls the network stack once and then drains
+queued bytes; it must not skip the poll or it can leave newly arrived TCP data
+unread.
 
 ```c
 #include "user/network.h"
@@ -207,7 +210,7 @@ Unless specified otherwise, failures return `-errno`.
 | 17 | `FS_STAT` | `RDI=path`, `RSI=file info output`. |
 | 18 | `FS_READ` | Read whole file; `RDI=path`, `RSI=buffer`, `RDX=capacity`. |
 | 19 | `FS_WRITE` | Replace whole file; `RDI=path`, `RSI=buffer`, `RDX=size`; guest write paths are restricted. |
-| 20 | `FS_LIST` | `RDI=directory`, `RSI=entries`, `RDX=capacity` (maximum 32). |
+| 20 | `FS_LIST` | `RDI=directory`, `RSI=entries`, `RDX=capacity` (maximum 32; returns the first entries). |
 | 21 | `FS_MKDIR` | Create directory; `RDI=path`. |
 | 22 | `FS_UNLINK` | Remove file; `RDI=path`. |
 | 23 | `GETTICKS` | Return scheduler tick count. |
@@ -244,6 +247,13 @@ Unless specified otherwise, failures return `-errno`.
 | 54 | `FB_SCROLL_UP` | `RDI=x`, `RSI=y`, `RDX=w`, `R10=h`, `R8=rows`, `R9=fill color`; region limited to 16 Mi pixels. |
 | 83 | `FB_FRAME_BEGIN` | Buffer a clipped screen region; `RDI=x`, `RSI=y`, `RDX=width`, `R10=height`. |
 | 84 | `FB_FRAME_END` | Publish the current buffered region; no arguments. |
+| 85 | `FS_LIST_RANGE` | `RDI=directory`, `RSI=entries`, `RDX=capacity` (maximum 32), `R10=entry offset`. |
+
+`FS_LIST_RANGE` pages through a directory without changing the existing
+`FS_LIST` behavior. Advance the offset by the number of entries returned until
+the call returns fewer entries than the requested capacity. The `apps` shell
+command uses this interface while recursively scanning directories for ELF
+files.
 
 ## Return-value convention
 

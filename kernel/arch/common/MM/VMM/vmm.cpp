@@ -116,6 +116,7 @@ struct MappingRecord {
     uint64_t requested_size;
     uint64_t page_count;
     MappingKind kind;
+    CachePolicy cache_policy;
 };
 
 struct Manager {
@@ -181,8 +182,9 @@ void *allocate_pages(uint64_t page_count, PageFlags flags) {
         gManager.lock.unlock_irqrestore(irq);
         return nullptr;
     }
-    gManager.mappings[slot] = MappingRecord{virtual_base, virtual_base, 0, page_count * kPageSize,
-                                            page_count, MappingKind::OwnedPages};
+    gManager.mappings[slot] = MappingRecord{
+        virtual_base, virtual_base, 0, page_count * kPageSize, page_count,
+        MappingKind::OwnedPages, CachePolicy::WriteBack};
     gManager.lock.unlock_irqrestore(irq);
     return reinterpret_cast<void *>(static_cast<uintptr_t>(virtual_base));
 }
@@ -218,10 +220,31 @@ void *map_physical(PhysicalAddress physical, uint64_t size, CachePolicy cache) {
     const uint64_t page_count = (span + kPageSize - 1) / kPageSize;
     if (!page_count || page_count > UINT64_MAX / kPageSize) return nullptr;
     const PhysicalAddress physical_base = physical.align_down(kPageSize);
+    const uint64_t mapped_physical_size = page_count * kPageSize;
+    if (physical_base.value() > UINT64_MAX - mapped_physical_size) return nullptr;
+    const uint64_t requested_physical_end =
+        physical_base.value() + mapped_physical_size;
     const uint64_t irq = gManager.lock.lock_irqsave();
     uint32_t slot;
     uint64_t virtual_base;
-    if (!get_record_slot(&slot) || !gManager.io_ranges.allocate(page_count, 1, &virtual_base)) {
+    if (!get_record_slot(&slot)) {
+        gManager.lock.unlock_irqrestore(irq); return nullptr;
+    }
+    for (uint32_t index = 0; index < kMaxMappings; ++index) {
+        const MappingRecord &record = gManager.mappings[index];
+        if (record.kind != MappingKind::Physical) continue;
+        const uint64_t record_size = record.page_count * kPageSize;
+        if (!record_size || record.physical_base > UINT64_MAX - record_size) {
+            gManager.lock.unlock_irqrestore(irq); return nullptr;
+        }
+        const uint64_t record_end = record.physical_base + record_size;
+        if (physical_base.value() < record_end &&
+            record.physical_base < requested_physical_end &&
+            record.cache_policy != cache) {
+            gManager.lock.unlock_irqrestore(irq); return nullptr;
+        }
+    }
+    if (!gManager.io_ranges.allocate(page_count, 1, &virtual_base)) {
         gManager.lock.unlock_irqrestore(irq); return nullptr;
     }
     PageFlags flags = PageFlags::Writable | PageFlags::NoExecute;
@@ -239,8 +262,9 @@ void *map_physical(PhysicalAddress physical, uint64_t size, CachePolicy cache) {
         return nullptr;
     }
     const uint64_t returned = virtual_base + offset;
-    gManager.mappings[slot] = MappingRecord{virtual_base, returned, physical_base.value(), size,
-                                            page_count, MappingKind::Physical};
+    gManager.mappings[slot] = MappingRecord{
+        virtual_base, returned, physical_base.value(), size, page_count,
+        MappingKind::Physical, cache};
     gManager.lock.unlock_irqrestore(irq);
     return reinterpret_cast<void *>(static_cast<uintptr_t>(returned));
 }

@@ -7,10 +7,9 @@
 #include "user/input.h"
 
 /*
- * Start menu + desktop icons. "Programs" is built each time the menu opens by
- * scanning /userspace/bin for <name>/<name>.elf, which is exactly the layout the
- * root Makefile produces for every directory under userland/bin, so new
- * programs appear here without touching this file.
+ * Start menu + desktop icons. "Programs" scans /userspace/bin for up to six
+ * entries with the <name>/<name>.elf layout produced by the root Makefile.
+ * Built-in tools are listed separately and launch their own ELF processes.
  */
 
 #define ITEM_H 24
@@ -25,7 +24,8 @@ struct item {
 
 static const struct item k_items[] = {
     {"Terminal", ACT_TERMINAL}, {"Files", ACT_FILES},
-    {"Text editor", ACT_EDITOR}, {"Task manager", ACT_TASKS},
+    {"Text editor", ACT_EDITOR}, {"Code", ACT_CODE},
+    {"Task manager", ACT_TASKS},
     {"System info", ACT_SYSINFO}, {"Calculator", ACT_CALC},
     {"Run...", ACT_RUN},
 };
@@ -66,6 +66,16 @@ static int row_action(int row, const char **label) {
     --row;
     *label = k_power[row].label;
     return k_power[row].action;
+}
+
+static void launch_builtin(const char *name) {
+    char path[112];
+    d_strcpy(path, sizeof(path), "/userspace/bin/");
+    d_strcat(path, sizeof(path), name);
+    d_strcat(path, sizeof(path), "/");
+    d_strcat(path, sizeof(path), name);
+    d_strcat(path, sizeof(path), ".elf");
+    (void)desk_run(path, 0, 0, 1);
 }
 
 static rect_t menu_rect(void) {
@@ -151,6 +161,11 @@ static void draw_menu_icon(int action, int32_t x, int32_t y) {
         gfx_fill(x + 8, y + 4, 12, 1, C_SHADOW);
         gfx_fill(x + 8, y + 8, 12, 1, C_SHADOW);
         gfx_fill(x + 8, y + 12, 9, 1, C_SHADOW);
+        break;
+    case ACT_CODE:
+        gfx_fill(x + 3, y, 22, 16, UINT32_C(0xff182331));
+        gfx_frame(x + 3, y, 22, 16, UINT32_C(0xff70d6dc));
+        gfx_text(x + 5, y, "{}", C_WHITE);
         break;
     case ACT_TASKS:
         gfx_fill(x + 3, y + 9, 5, 7, C_OK);
@@ -289,12 +304,13 @@ void app_launch(int action) {
     case ACT_TERMINAL:
         (void)desk_run(shell_argv[0], 1, shell_argv, 0);
         break;
-    case ACT_FILES: (void)wm_open(&app_files, 0); break;
-    case ACT_EDITOR: (void)wm_open(&app_editor, 0); break;
-    case ACT_TASKS: (void)wm_open(&app_tasks, 0); break;
-    case ACT_SYSINFO: (void)wm_open(&app_sysinfo, 0); break;
-    case ACT_CALC: (void)wm_open(&app_calc, 0); break;
-    case ACT_GEOMETRY: (void)wm_open(&app_geometry, 0); break;
+    case ACT_FILES: launch_builtin("files"); break;
+    case ACT_EDITOR: launch_builtin("editor"); break;
+    case ACT_CODE: launch_builtin("code"); break;
+    case ACT_TASKS: launch_builtin("taskmgr"); break;
+    case ACT_SYSINFO: launch_builtin("sysinfo"); break;
+    case ACT_CALC: launch_builtin("calculator"); break;
+    case ACT_GEOMETRY: launch_builtin("geometry"); break;
     case ACT_RUN:
         dlg_prompt("Run program (name or /path.elf, then arguments):", "",
                    run_done, 0);
@@ -331,7 +347,7 @@ static const struct {
 } k_icons[N_ICONS] = {
     {"Term", ACT_TERMINAL}, {"Files", ACT_FILES}, {"Edit", ACT_EDITOR},
     {"Tasks", ACT_TASKS},   {"Info", ACT_SYSINFO}, {"Calc", ACT_CALC},
-    {"Objetos", ACT_GEOMETRY},
+    {"Geometry", ACT_GEOMETRY},
 };
 
 static rect_t g_icon_cells[N_ICONS];

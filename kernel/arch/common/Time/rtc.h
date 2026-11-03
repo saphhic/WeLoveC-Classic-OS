@@ -26,4 +26,4 @@ int rtc_get_local_hour();
 
 void set_timezone(int offset);
 int rtc_get_timezone();
-uint32_t rtc_get_total_seconds(); // Nueva función
+uint32_t rtc_get_total_seconds(); // New function.

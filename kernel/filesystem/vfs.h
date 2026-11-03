@@ -63,6 +63,8 @@ bool vfs_write_file_range(const char* path, uint32_t offset,
 void vfs_free_file(void* data);
 const FileNode* fs_get_node(const char* path);
 int fs_list(const char* path, VfsListEntry* out_entries, int max_entries);
+int fs_list_range(const char* path, VfsListEntry* out_entries, int max_entries,
+                  uint64_t offset);
 
 #ifdef __cplusplus
 }

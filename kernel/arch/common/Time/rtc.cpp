@@ -73,8 +73,8 @@ static bool read_raw(RtcRaw* out) {
 }
 
 static bool read_stable_raw(RtcRaw* out) {
-    // Lectura directa: es preferible un micro-error visual en el reloj
-    // que bloquear todo el sistema operativo por 500ms.
+    // A small visual clock error is preferable to blocking the whole system
+    // for 500 ms, so read the RTC directly here.
     if (!read_raw(out)) return false;
     return true;
 }
@@ -206,7 +206,7 @@ uint32_t rtc_get_total_seconds() {
     if (rtc_get_local_time(&time)) {
         return (uint32_t)time.hour * 3600 + (uint32_t)time.minute * 60 + (uint32_t)time.second;
     }
-    return 0; // Fallback si el RTC no está disponible
+    return 0; // Fall back when the RTC is unavailable.
 }
 
 int rtc_get_timezone() {

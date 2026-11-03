@@ -1,21 +1,21 @@
 # Circuit Lab
 
-Aplicacion independiente de usuario para WeLoveC Classic. El Makefile genera
-`build/userland/bin/circuit_lab/circuit_lab.elf`; al incluir ese ELF en la
-imagen de usuario, aparece como programa del escritorio.
+Standalone user application for WeLoveC Classic. The Makefile builds
+`build/userland/bin/circuit_lab/circuit_lab.elf`; the ELF is added to the user
+image and appears as a desktop program.
 
-## Uso
+## Usage
 
-- El circuito de ejemplo se abre al iniciar. Pulsa **SIMULAR** y cambia el
-  interruptor con la herramienta **Elegir** para ver el efecto en la bombilla.
-- Elige bateria, resistor, bombilla o switch y pulsa en la cuadrícula para
-  colocar una pieza. Arrastra una pieza para moverla.
-- Elige **Cable** y pulsa los dos terminales que quieras unir.
-- Pulsa **SIMULAR** para resolver el circuito de corriente continua. Las piezas
-  muestran corriente en mA; los nodos con tension aparecen en verde.
-- **BORRAR** limpia el circuito. **DEMO** restaura el circuito didactico.
-- Atajos: `1` bateria, `2` resistor, `3` bombilla, `4` switch, `W` cable,
-  `S` seleccionar, `Espacio` simular, `C` limpiar y `Supr` borrar la pieza.
+- A sample circuit opens at startup. Press **SIMULATE**, then toggle the
+  switch with the **Select** tool to see its effect on the lamp.
+- Choose a battery, resistor, lamp, or switch, then click the grid to place a
+  part. Drag a part to move it.
+- Choose **Wire**, then click the two terminals to connect.
+- Press **SIMULATE** to solve the DC circuit. Parts show current in mA; nodes
+  with voltage are shown in green.
+- **CLEAR** clears the circuit. **DEMO** restores the sample circuit.
+- Shortcuts: `1` battery, `2` resistor, `3` lamp, `4` switch, `W` wire,
+  `S` select, `Space` simulate, `C` clear, and `Del` remove a part.
 
-El modelo actual usa una bateria ideal de 9 V, un resistor de 100 ohmios, una
-bombilla modelada como 220 ohmios y un switch abierto/cerrado.
+The current model uses an ideal 9 V battery, a 100-ohm resistor, a lamp modeled
+as 220 ohms, and an open/closed switch.

@@ -219,6 +219,8 @@ struct window {
 };
 
 void wm_init(void);
+void wm_init_embedded(void);
+int wm_embedded_resize(int32_t width, int32_t height);
 struct window *wm_open(const struct app_ops *ops, const char *arg);
 void wm_close(struct window *w);
 void wm_request_close(struct window *w);
@@ -241,12 +243,6 @@ void wm_taskbar_repaint(void);
 #define APP_STATE_CHECK(type) \
     _Static_assert(sizeof(type) <= APP_STATE_MAX, #type " exceeds APP_STATE_MAX")
 
-extern const struct app_ops app_files;
-extern const struct app_ops app_editor;
-extern const struct app_ops app_tasks;
-extern const struct app_ops app_sysinfo;
-extern const struct app_ops app_calc;
-extern const struct app_ops app_geometry;
 extern const struct app_ops app_program;
 void app_program_reap(void);
 void app_program_wait_all(void);
@@ -270,6 +266,7 @@ enum {
     ACT_TERMINAL = 1,
     ACT_FILES,
     ACT_EDITOR,
+    ACT_CODE,
     ACT_TASKS,
     ACT_SYSINFO,
     ACT_CALC,

@@ -1321,9 +1321,9 @@ bool netstack_init() {
         uprint("[net] DHCP ");
         uprint_ip(g_state.local_ip);
         uprint(".\n");
-        // Si DHCP tiene exito, nos aseguramos que el DNS no sea 0.0.0.0
+        // If DHCP succeeds, make sure the DNS server is not 0.0.0.0.
         if (ipv4_is_zero(g_state.dns_server)) {
-            uprint("[net] WARN: DHCP no dio DNS. Usando 8.8.8.8\n");
+            uprint("[net] WARN: DHCP did not provide DNS. Using 8.8.8.8\n");
             const uint8_t fallback_dns[4] = {8, 8, 8, 8};
             copy_bytes(g_state.dns_server, fallback_dns, 4);
         }

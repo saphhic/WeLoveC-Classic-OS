@@ -1596,7 +1596,8 @@ bool fat32_move(const char *old_path, const char *new_path) {
     return result;
 }
 
-int fat32_list(const char *path, VfsListEntry *out_entries, int max_entries) {
+int fat32_list_range(const char *path, VfsListEntry *out_entries,
+                     int max_entries, uint64_t offset) {
     if (!out_entries || max_entries <= 0) return 0;
     const uint64_t irq = gFatLock.lock();
     FatNode directory{};
@@ -1607,6 +1608,7 @@ int fat32_list(const char *path, VfsListEntry *out_entries, int max_entries) {
     if (!buffer) { gFatLock.unlock(irq); return 0; }
     uint32_t cluster = directory.first_cluster;
     int count = 0;
+    uint64_t skipped = 0;
     for (uint64_t chain = 0; cluster_valid(cluster) && chain < gVolume.cluster_count && count < max_entries; ++chain) {
         if (!volume_read_bytes(cluster_byte_offset(cluster), buffer, gVolume.cluster_size)) break;
         const uint32_t entries = gVolume.cluster_size / 32;
@@ -1622,6 +1624,11 @@ int fat32_list(const char *path, VfsListEntry *out_entries, int max_entries) {
             short_name_decode(entry, short_name, sizeof(short_name));
             const char *name = has_lfn ? long_name : short_name;
             if (equal_ci(name, ".") || equal_ci(name, "..")) { lfn_reset(&lfn); continue; }
+            if (skipped < offset) {
+                ++skipped;
+                lfn_reset(&lfn);
+                continue;
+            }
             copy_text(out_entries[count].name, sizeof(out_entries[count].name), name);
             out_entries[count].size = rd32(entry + 28);
             out_entries[count].is_directory = (entry[11] & 0x10) != 0;
@@ -1636,5 +1643,9 @@ int fat32_list(const char *path, VfsListEntry *out_entries, int max_entries) {
     welovec::memory::heap::deallocate(buffer);
     gFatLock.unlock(irq);
     return count;
+}
+
+int fat32_list(const char *path, VfsListEntry *out_entries, int max_entries) {
+    return fat32_list_range(path, out_entries, max_entries, 0);
 }
 

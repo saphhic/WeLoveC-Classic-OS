@@ -302,14 +302,14 @@ static void draw(void) {
     rect(0, 0, (int32_t)screen_w, (int32_t)screen_h, C_BG);
     rect(0, 0, (int32_t)screen_w, HEADER_H, C_HEADER);
     text(14, 12, "CIRCUIT LAB", C_ACCENT);
-    if (!compact_ui()) text(210, 12, "Editor de circuitos DC", C_TEXT);
+    if (!compact_ui()) text(210, 12, "DC circuit editor", C_TEXT);
 
     const int32_t side = sidebar_width();
     const int32_t footer = footer_height();
     rect(0, HEADER_H, side, max_i32(0, (int32_t)screen_h - HEADER_H - footer), C_SIDE);
     if (screen_h >= 300) text(12, 54, "COMPONENTES", C_DIM);
     static const char *const wide_labels[] = {
-        "Bateria", "Resistor", "Bombilla", "Switch", "Cable", "Elegir"
+        "Battery", "Resistor", "Lamp", "Switch", "Wire", "Select"
     };
     static const char *const compact_labels[] = {
         "BAT", "RES", "LMP", "SW", "WIRE", "SEL"
@@ -355,10 +355,10 @@ static void draw(void) {
     for (uint32_t i = 0; i < part_count; ++i) draw_part(i);
 
     if (wire_start >= 0) {
-        text(cx + 12, cy + 10, "Elige el segundo terminal", C_YELLOW);
+        text(cx + 12, cy + 10, "Select the second terminal", C_YELLOW);
     } else if (part_count == 0) {
-        text(cx + 20, cy + 24, "Pulsa EJEMPLO o elige un componente.", C_DIM);
-        text(cx + 20, cy + 48, "Conecta los terminales con la herramienta Cable.", C_DIM);
+        text(cx + 20, cy + 24, "Select DEMO or choose a component.", C_DIM);
+        text(cx + 20, cy + 48, "Connect terminals with the Wire tool.", C_DIM);
     }
 
     const int32_t controls_y = 50;
@@ -369,33 +369,33 @@ static void draw(void) {
     draw_button(demo_x, controls_y, demo_w, 30,
                 compact_ui() ? "DEM" : "DEMO", 0);
     draw_button(clear_x, controls_y, clear_w, 30,
-                compact_ui() ? "CLR" : "BORRAR", 0);
+                compact_ui() ? "CLR" : "CLEAR", 0);
     draw_button(run_x, controls_y, run_w, 30,
                 compact_ui() ? (running ? "OFF" : "RUN")
-                             : (running ? "PARAR" : "SIMULAR"), running);
+                             : (running ? "STOP" : "SIMULATE"), running);
 
     rect(0, (int32_t)screen_h - footer, (int32_t)screen_w, footer, C_HEADER);
     if (solve_status == STATUS_SOLVED && running)
         text(10, (int32_t)screen_h - (footer < 30 ? 19 : 27),
-             compact_ui() ? "RUN: verde = tension" :
-                            "Simulacion activa: verde = nodo con tension", C_POWER);
+             compact_ui() ? "RUN: green = voltage" :
+                            "Simulation running: green = voltage present", C_POWER);
     else if (solve_status == STATUS_ERROR)
         text(10, (int32_t)screen_h - (footer < 30 ? 19 : 27),
-             compact_ui() ? "Error de circuito" :
-                            "Error de circuito: revisa fuente y conexiones", C_RED);
+             compact_ui() ? "Circuit error" :
+                            "Circuit error: check the source and connections", C_RED);
     else if (footer < 30)
         text(10, (int32_t)screen_h - 19,
-             tiny_ui() ? "1-4  W cable  Espacio" :
-                            "1-4 piezas  W cable  espacio simula", C_DIM);
+             tiny_ui() ? "1-4  W wire  Space" :
+                            "1-4 parts  W wire  Space simulates", C_DIM);
     else if (compact_ui()) {
         text(10, (int32_t)screen_h - 33,
-             tiny_ui() ? "1-4 piezas  W cable" : "1-4 pieza  W cable", C_DIM);
+             tiny_ui() ? "1-4 parts  W wire" : "1-4 part  W wire", C_DIM);
         text(10, (int32_t)screen_h - 17,
-             tiny_ui() ? "Space run  C clear" : "Espacio simula  C limpia", C_DIM);
+             tiny_ui() ? "Space runs  C clears" : "Space simulates  C clears", C_DIM);
     }
     else {
-        text(10, (int32_t)screen_h - 33, "1-4 pieza  W cable  Espacio simula", C_DIM);
-        text(10, (int32_t)screen_h - 17, "C limpia  Supr borra  Cable: pin a pin", C_DIM);
+        text(10, (int32_t)screen_h - 33, "1-4 part  W wire  Space simulates", C_DIM);
+        text(10, (int32_t)screen_h - 17, "C clears  Del removes  Wire: connect pins", C_DIM);
     }
 }
 

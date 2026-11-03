@@ -5,6 +5,7 @@
 //written by saphhic.
 
 #include "framebuffer.hpp"
+#include "gpu.hpp"
 #include "IntegratedFontService/font16x16_basic.h"
 #include "IntegratedFontService/font8x8_basic.h"
 #include "IntegratedFontService/font_ubuntu_bitmap_16x16.h"
@@ -53,6 +54,18 @@ static bool gFrameBufferAllocationFailed;
 static uint64_t gFrameOwner;
 static int32_t gFrameX, gFrameY;
 static uint32_t gFrameWidth, gFrameHeight;
+static bool gFramePreparing;
+static bool gFrameCancelRequested;
+static bool gFrameGpuPresentCandidate;
+static bool gFrameGpuPresentationFailed;
+
+static bool framebuffer_gpu_surface_format(uint32_t *out_format) {
+    /* UEFI BGRR memory matches XRGB8888 on little-endian x86. Other GOP
+       layouts need conversion before they can be passed to a native driver. */
+    if (!out_format || fb_pixel_format != 1) return false;
+    *out_format = WELOVEC_GPU_PIXEL_XRGB8888;
+    return true;
+}
 
 static void copy_forward_bytes(uint8_t *destination, const uint8_t *source,
                                uint64_t bytes) {
@@ -346,6 +359,12 @@ bool framebuffer_frame_begin(uint64_t owner, int32_t x, int32_t y,
                                    : static_cast<int>(bottom);
     if (x0 >= x1 || y0 >= y1) return false;
 
+    uint32_t gpu_pixel_format = 0;
+    const bool gpu_present_candidate =
+        framebuffer_gpu_surface_format(&gpu_pixel_format) &&
+        !__atomic_load_n(&gFrameGpuPresentationFailed, __ATOMIC_ACQUIRE) &&
+        welovec_gpu_can_present(width, height, gpu_pixel_format);
+
     if (!gFrameBuffer) {
         if (gFrameBufferAllocationFailed) return false;
         const uint64_t buffer_bytes = static_cast<uint64_t>(pitch) * height;
@@ -371,38 +390,101 @@ bool framebuffer_frame_begin(uint64_t owner, int32_t x, int32_t y,
             (void)welovec::memory::heap::deallocate(candidate);
     }
 
-    const uint64_t irq = gFrameLock.lock_irqsave();
-    if (gFrameOwner) {
+    uint64_t irq = gFrameLock.lock_irqsave();
+    if (__atomic_load_n(&gFrameOwner, __ATOMIC_ACQUIRE)) {
         gFrameLock.unlock_irqrestore(irq);
         return false;
     }
-    copy_framebuffer_region(gFrameBuffer, framebuffer, x0, y0,
-                            static_cast<uint32_t>(x1 - x0),
-                            static_cast<uint32_t>(y1 - y0));
     gFrameX = x0;
     gFrameY = y0;
     gFrameWidth = static_cast<uint32_t>(x1 - x0);
     gFrameHeight = static_cast<uint32_t>(y1 - y0);
-    gFrameOwner = owner;
+    __atomic_store_n(&gFrameOwner, owner, __ATOMIC_RELEASE);
+    __atomic_store_n(&gFramePreparing, true, __ATOMIC_RELEASE);
+    gFrameCancelRequested = false;
+    gFrameGpuPresentCandidate = gpu_present_candidate;
     gFrameLock.unlock_irqrestore(irq);
-    return true;
+
+    if (gpu_present_candidate) {
+        /* Native present consumes a complete frame, so synchronize its
+           backing surface before applying this transaction's dirty region. */
+        copy_framebuffer_region(gFrameBuffer, framebuffer, 0, 0, width, height);
+    } else {
+        copy_framebuffer_region(gFrameBuffer, framebuffer, x0, y0,
+                                static_cast<uint32_t>(x1 - x0),
+                                static_cast<uint32_t>(y1 - y0));
+    }
+
+    irq = gFrameLock.lock_irqsave();
+    const bool canceled =
+        __atomic_load_n(&gFrameOwner, __ATOMIC_ACQUIRE) != owner ||
+        gFrameCancelRequested;
+    __atomic_store_n(&gFramePreparing, false, __ATOMIC_RELEASE);
+    if (canceled &&
+        __atomic_load_n(&gFrameOwner, __ATOMIC_ACQUIRE) == owner) {
+        __atomic_store_n(&gFrameOwner, UINT64_C(0), __ATOMIC_RELEASE);
+        gFrameX = gFrameY = 0;
+        gFrameWidth = gFrameHeight = 0;
+        gFrameGpuPresentCandidate = false;
+        gFrameCancelRequested = false;
+    }
+    gFrameLock.unlock_irqrestore(irq);
+    return !canceled;
 }
 
 bool framebuffer_frame_end(uint64_t owner) {
     if (!owner) return false;
-    const uint64_t irq = gFrameLock.lock_irqsave();
-    if (gFrameOwner != owner || !gFrameBuffer) {
+    uint64_t irq = gFrameLock.lock_irqsave();
+    if (__atomic_load_n(&gFrameOwner, __ATOMIC_ACQUIRE) != owner ||
+        !gFrameBuffer ||
+        __atomic_load_n(&gFramePreparing, __ATOMIC_ACQUIRE)) {
         gFrameLock.unlock_irqrestore(irq);
         return false;
     }
+
+    __atomic_store_n(&gFramePreparing, true, __ATOMIC_RELEASE);
+    const bool try_gpu_present = gFrameGpuPresentCandidate;
+    uint32_t gpu_pixel_format = 0;
+    WelovecGpuSurface gpu_surface{};
+    if (try_gpu_present &&
+        framebuffer_gpu_surface_format(&gpu_pixel_format)) {
+        gpu_surface.pixels = gFrameBuffer;
+        gpu_surface.size_bytes = static_cast<uint64_t>(pitch) * height;
+        gpu_surface.width = width;
+        gpu_surface.height = height;
+        gpu_surface.pitch_bytes = pitch;
+        gpu_surface.pixel_format = gpu_pixel_format;
+    }
+    gFrameLock.unlock_irqrestore(irq);
+
+    /* The callback runs without the IRQ spinlock held. A driver can wait for
+       hardware completion here; on any error the GOP copy below still wins. */
+    const WelovecGpuStatus gpu_status =
+        try_gpu_present && gpu_surface.pixels
+            ? welovec_gpu_present_active(&gpu_surface)
+            : WELOVEC_GPU_UNSUPPORTED;
+
+    irq = gFrameLock.lock_irqsave();
+    if (__atomic_load_n(&gFrameOwner, __ATOMIC_ACQUIRE) != owner ||
+        !gFrameBuffer) {
+        gFrameLock.unlock_irqrestore(irq);
+        return false;
+    }
+    if (try_gpu_present && gpu_status != WELOVEC_GPU_OK)
+        __atomic_store_n(&gFrameGpuPresentationFailed, true, __ATOMIC_RELEASE);
+
+    /* Keep the firmware framebuffer current as the immediate CPU fallback. */
     copy_framebuffer_region(framebuffer, gFrameBuffer, gFrameX, gFrameY,
                             gFrameWidth, gFrameHeight);
     /* GOP framebuffer pages are mapped write-combining; drain WC stores before
        the transaction is released or the display can observe stale chunks. */
     __asm__ volatile("sfence" ::: "memory");
-    gFrameOwner = 0;
+    __atomic_store_n(&gFrameOwner, UINT64_C(0), __ATOMIC_RELEASE);
     gFrameX = gFrameY = 0;
     gFrameWidth = gFrameHeight = 0;
+    __atomic_store_n(&gFramePreparing, false, __ATOMIC_RELEASE);
+    gFrameCancelRequested = false;
+    gFrameGpuPresentCandidate = false;
     gFrameLock.unlock_irqrestore(irq);
     return true;
 }
@@ -410,10 +492,16 @@ bool framebuffer_frame_end(uint64_t owner) {
 void framebuffer_frame_cancel_owner(uint64_t owner) {
     if (!owner) return;
     const uint64_t irq = gFrameLock.lock_irqsave();
-    if (gFrameOwner == owner) {
-        gFrameOwner = 0;
-        gFrameX = gFrameY = 0;
-        gFrameWidth = gFrameHeight = 0;
+    if (__atomic_load_n(&gFrameOwner, __ATOMIC_ACQUIRE) == owner) {
+        if (__atomic_load_n(&gFramePreparing, __ATOMIC_ACQUIRE)) {
+            gFrameCancelRequested = true;
+        } else {
+            __atomic_store_n(&gFrameOwner, UINT64_C(0), __ATOMIC_RELEASE);
+            gFrameX = gFrameY = 0;
+            gFrameWidth = gFrameHeight = 0;
+            gFrameGpuPresentCandidate = false;
+            gFrameCancelRequested = false;
+        }
     }
     gFrameLock.unlock_irqrestore(irq);
 }
@@ -422,17 +510,27 @@ bool framebuffer_frame_redirect_begin(
     uint64_t owner, WelovecFramebufferRedirectState *state) {
     if (!state) return false;
     state->active = false;
-    uint64_t flags;
-    __asm__ volatile("pushfq; popq %0; cli" : "=r"(flags) :: "memory");
-    if (!owner || gFrameOwner != owner || !gFrameBuffer) {
-        if (flags & (UINT64_C(1) << 9)) __asm__ volatile("sti" ::: "memory");
-        return false;
+    for (;;) {
+        uint64_t flags;
+        __asm__ volatile("pushfq; popq %0; cli" : "=r"(flags) :: "memory");
+        if (!owner ||
+            __atomic_load_n(&gFrameOwner, __ATOMIC_ACQUIRE) != owner ||
+            !gFrameBuffer) {
+            if (flags & (UINT64_C(1) << 9))
+                __asm__ volatile("sti" ::: "memory");
+            return false;
+        }
+        if (!__atomic_load_n(&gFramePreparing, __ATOMIC_ACQUIRE)) {
+            state->framebuffer = framebuffer;
+            state->interrupt_flags = flags;
+            state->active = true;
+            framebuffer = gFrameBuffer;
+            return true;
+        }
+        if (flags & (UINT64_C(1) << 9))
+            __asm__ volatile("sti" ::: "memory");
+        __asm__ volatile("pause" ::: "memory");
     }
-    state->framebuffer = framebuffer;
-    state->interrupt_flags = flags;
-    state->active = true;
-    framebuffer = gFrameBuffer;
-    return true;
 }
 
 void framebuffer_frame_redirect_end(WelovecFramebufferRedirectState *state) {
@@ -682,6 +780,10 @@ bool framebuffer_init(const WelovecBootInfo *boot_info) {
     FRAMEBUFFER_ADDR = 0;
     FRAMEBUFFER_WIDTH = FRAMEBUFFER_HEIGHT = FRAMEBUFFER_PITCH = 0;
     fb_pixel_format = UINT32_MAX;
+    __atomic_store_n(&gFramePreparing, false, __ATOMIC_RELEASE);
+    gFrameCancelRequested = false;
+    __atomic_store_n(&gFrameGpuPresentationFailed, false, __ATOMIC_RELEASE);
+    gFrameGpuPresentCandidate = false;
     for (uint32_t i = 0; i < 4; ++i) fb_pixel_masks[i] = 0;
     fb_cursor_x = fb_cursor_y = 0;
     if (!boot_info || boot_info->magic != WELOVEC_BOOTINFO_MAGIC ||

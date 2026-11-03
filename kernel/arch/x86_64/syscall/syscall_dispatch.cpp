@@ -732,10 +732,10 @@ int64_t network_tcp_receive_syscall(const syscall_regs_t *regs) {
         welovec_network_api_unlock(network_flags);
         return -static_cast<int64_t>(kErrBadDescriptor);
     }
-    /* tcp_recv performs no work when max_wait_loops is zero.  The syscall is
-       nonblocking, so poll once and then return whatever is already queued. */
-    const int received = regs->rdx
-        ? tcp_recv(transport_id, data, static_cast<int>(regs->rdx), 1) : 0;
+    /* Keep this call unconditional: tcp_recv polls once with max_wait_loops=1,
+       including when capacity is zero, then drains any bytes that fit. */
+    const int received = tcp_recv(transport_id, data,
+                                  static_cast<int>(regs->rdx), 1);
     welovec_network_api_unlock(network_flags);
     if (received > 0 && !welovec::process::copy_to_current_user(
             regs->rsi, data, static_cast<uint64_t>(received)))
@@ -1015,7 +1015,7 @@ int64_t fs_write_syscall(const syscall_regs_t *regs) {
     return written ? static_cast<int64_t>(regs->rdx) : -static_cast<int64_t>(kErrIo);
 }
 
-int64_t fs_list_syscall(const syscall_regs_t *regs) {
+int64_t fs_list_syscall_range(const syscall_regs_t *regs, uint64_t offset) {
     char path[MAX_FILENAME];
     if (!copy_user_path(regs->rdi, path)) return -static_cast<int64_t>(kErrFault);
     if (!user_can_read_path(path)) return -static_cast<int64_t>(kErrPermission);
@@ -1037,7 +1037,8 @@ int64_t fs_list_syscall(const syscall_regs_t *regs) {
         return -static_cast<int64_t>(kErrNoMemory);
     }
 
-    const int count = fs_list(path, entries, static_cast<int>(maximum));
+    const int count = fs_list_range(path, entries, static_cast<int>(maximum),
+                                    offset);
     if (count < 0 || static_cast<uint64_t>(count) > maximum) {
         welovec::memory::heap::deallocate(user_entries);
         welovec::memory::heap::deallocate(entries);
@@ -1060,6 +1061,14 @@ int64_t fs_list_syscall(const syscall_regs_t *regs) {
     welovec::memory::heap::deallocate(user_entries);
     welovec::memory::heap::deallocate(entries);
     return copied ? count : -static_cast<int64_t>(kErrFault);
+}
+
+int64_t fs_list_syscall(const syscall_regs_t *regs) {
+    return fs_list_syscall_range(regs, 0);
+}
+
+int64_t fs_list_range_syscall(const syscall_regs_t *regs) {
+    return fs_list_syscall_range(regs, regs->r10);
 }
 
 int64_t fs_mkdir_syscall(const syscall_regs_t *regs) {
@@ -1580,6 +1589,9 @@ void syscall_dispatch(syscall_regs_t *regs) {
             break;
         case SYS_FS_LIST:
             regs->rax = static_cast<uint64_t>(fs_list_syscall(regs));
+            break;
+        case SYS_FS_LIST_RANGE:
+            regs->rax = static_cast<uint64_t>(fs_list_range_syscall(regs));
             break;
         case SYS_FS_MKDIR:
             regs->rax = static_cast<uint64_t>(fs_mkdir_syscall(regs));

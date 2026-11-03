@@ -1,6 +1,6 @@
 build/obj/IDM/DisplayService/framebufferc.cpp.o: \
   IDM/DisplayService/framebufferc.cpp IDM/DisplayService/framebuffer.hpp \
-  include/boot/boot_protocol.h \
+  include/boot/boot_protocol.h IDM/DisplayService/gpu.hpp \
   IDM/DisplayService/IntegratedFontService/font16x16_basic.h \
   IDM/DisplayService/IntegratedFontService/font8x8_basic.h \
   IDM/DisplayService/IntegratedFontService/font_ubuntu_bitmap_16x16.h \
@@ -11,6 +11,7 @@ build/obj/IDM/DisplayService/framebufferc.cpp.o: \
   arch/x86_64/mm/physical/physical_memory.hpp
 IDM/DisplayService/framebuffer.hpp:
 include/boot/boot_protocol.h:
+IDM/DisplayService/gpu.hpp:
 IDM/DisplayService/IntegratedFontService/font16x16_basic.h:
 IDM/DisplayService/IntegratedFontService/font8x8_basic.h:
 IDM/DisplayService/IntegratedFontService/font_ubuntu_bitmap_16x16.h:

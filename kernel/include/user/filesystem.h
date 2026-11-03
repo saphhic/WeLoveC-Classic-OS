@@ -81,6 +81,15 @@ static inline int64_t welovec_fs_list(const char *path,
                                  (uint64_t)(uintptr_t)entries, capacity);
 }
 
+/* Lists one page of a directory, starting after `offset` entries. */
+static inline int64_t welovec_fs_list_range(
+        const char *path, struct welovec_user_dir_entry *entries,
+        uint64_t capacity, uint64_t offset) {
+    return welovec_user_syscall4(WELOVEC_SYS_FS_LIST_RANGE,
+                                 (uint64_t)(uintptr_t)path,
+                                 (uint64_t)(uintptr_t)entries, capacity, offset);
+}
+
 static inline int64_t welovec_fs_mkdir(const char *path) {
     return welovec_user_syscall1(WELOVEC_SYS_FS_MKDIR, (uint64_t)(uintptr_t)path);
 }

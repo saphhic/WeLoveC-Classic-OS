@@ -25,6 +25,7 @@ static uint8_t g_z[WIN_MAX];          /* z-order of slot indices, [0] = bottom *
 static uint32_t g_zn;
 static struct window *g_focus;
 static struct window *g_capture;
+static uint8_t g_embedded;
 
 static struct {
     int active;
@@ -61,6 +62,7 @@ static void z_push(struct window *w) {
 }
 
 rect_t wm_client(const struct window *w) {
+    if (g_embedded) return w->r;
     return rect_make(w->r.x + BORDER, w->r.y + 1 + TITLE_H, w->r.w - 2 * BORDER,
                      w->r.h - (1 + TITLE_H) - BORDER);
 }
@@ -121,6 +123,14 @@ static void paint_window(const struct window *w, rect_t area) {
     const rect_t clip = rect_intersect(area, w->r);
     if (rect_empty(clip)) return;
     gfx_clip(clip);
+    if (g_embedded) {
+        const rect_t client = wm_client(w);
+        if (!w->ops->surface_backed)
+            gfx_fill(client.x, client.y, client.w, client.h, C_WIN_BG);
+        gfx_clip(rect_intersect(clip, client));
+        if (w->ops->draw) w->ops->draw((struct window *)w, client);
+        return;
+    }
     const int active = (w == g_focus);
     const uint32_t tc = active ? C_TITLE_ON : C_TITLE_OFF;
 
@@ -224,11 +234,15 @@ void wm_taskbar_repaint(void) { wm_repaint(g_desk.taskbar); }
 void wm_repaint(rect_t area) {
     area = rect_intersect(area, screen_rect());
     if (rect_empty(area)) return;
-    const int frame_started = welovec_fb_frame_begin(
+    /* Embedded desktop apps draw into a process-owned window surface. Starting
+       the screen-wide frame transaction here would redirect their drawing to
+       the compositor's shared back buffer and let concurrent apps race it. */
+    const int frame_started = !g_embedded && welovec_fb_frame_begin(
         area.x, area.y, area.w, area.h) == 0;
     gfx_clip(area);
-    gfx_fill(area.x, area.y, area.w, area.h, C_DESKTOP);
-    icons_draw(area);
+    gfx_fill(area.x, area.y, area.w, area.h,
+             g_embedded ? C_WIN_BG : C_DESKTOP);
+    if (!g_embedded) icons_draw(area);
     for (uint32_t i = 0; i < g_zn; ++i) {
         const struct window *w = &g_win[g_z[i]];
         const int hidden_dragged_window = g_drag.active && !g_drag.resize &&
@@ -236,12 +250,14 @@ void wm_repaint(rect_t area) {
         if (!hidden_dragged_window && !w->minimized && rect_overlap(w->r, area))
             paint_window(w, area);
     }
-    paint_taskbar(area);
-    menu_draw(area);
-    paint_ghost(area);
+    if (!g_embedded) {
+        paint_taskbar(area);
+        menu_draw(area);
+        paint_ghost(area);
+    }
     dlg_draw(area);
     const rect_t cr = cursor_rect();
-    if (rect_overlap(cr, area)) {
+    if (!g_embedded && rect_overlap(cr, area)) {
         gfx_clip(area);
         cursor_draw();
     }
@@ -355,6 +371,17 @@ struct window *wm_open(const struct app_ops *ops, const char *arg) {
     d_strcpy(w->title, sizeof(w->title), ops->name);
 
     const rect_t wk = g_desk.work;
+    if (g_embedded) {
+        w->r = screen_rect();
+        if (ops->open && ops->open(w, arg) != 0) {
+            w->used = 0;
+            return 0;
+        }
+        z_push(w);
+        g_focus = w;
+        wm_repaint(w->r);
+        return w;
+    }
     int32_t cw = ops->def_w < wk.w ? ops->def_w : wk.w;
     int32_t ch = ops->def_h < wk.h ? ops->def_h : wk.h;
     const int32_t step = (int32_t)(g_zn % 6);
@@ -517,6 +544,10 @@ void wm_mouse(const struct mouse_event *e) {
         dlg_mouse(e);
         return;
     }
+    if (g_embedded) {
+        if (g_focus && g_focus->used) forward_mouse(g_focus, e);
+        return;
+    }
     if (g_drag.active) {
         if (e->type == MOUSE_MOVE) drag_move(e);
         else if (e->type == MOUSE_UP) drag_end();
@@ -577,6 +608,11 @@ void wm_key(int key) {
         dlg_key(key);
         return;
     }
+    if (g_embedded) {
+        if (g_focus && g_focus->ops->key)
+            (void)g_focus->ops->key(g_focus, key);
+        return;
+    }
     if (menu_is_open()) {
         if (menu_key(key)) return;
     }
@@ -612,7 +648,7 @@ static void update_clock(void) {
 }
 
 void wm_tick(uint64_t ticks) {
-    update_clock();
+    if (!g_embedded) update_clock();
     for (uint32_t i = 0; i < WIN_MAX; ++i) {
         struct window *w = &g_win[i];
         if (w->used && !w->minimized && w->ops->tick) w->ops->tick(w, ticks);
@@ -642,17 +678,45 @@ void wm_shutdown(void) {
 }
 
 int wm_cursor_resize(void) {
+    if (g_embedded) return 0;
     if (g_drag.active) return g_drag.resize;
     struct window *w = window_at(g_desk.ptr_x, g_desk.ptr_y);
     return w && !w->maximized &&
         rect_hit(resize_handle_rect(w), g_desk.ptr_x, g_desk.ptr_y);
 }
 
-void wm_init(void) {
+static void wm_init_mode(int embedded) {
     memset(g_win, 0, sizeof(g_win));
     g_zn = 0;
     g_focus = 0;
     g_capture = 0;
     g_drag.active = 0;
-    update_clock();
+    g_embedded = embedded != 0;
+    if (!g_embedded) update_clock();
+}
+
+void wm_init(void) {
+    wm_init_mode(0);
+}
+
+void wm_init_embedded(void) {
+    wm_init_mode(1);
+}
+
+int wm_embedded_resize(int32_t width, int32_t height) {
+    if (!g_embedded || width <= 0 || height <= 0) return 0;
+    g_desk.width = width;
+    g_desk.height = height;
+    g_desk.work = rect_make(0, 0, width, height);
+    g_desk.taskbar = rect_make(0, height, width, 0);
+    if (!g_focus || !g_focus->used) return 1;
+    const rect_t old = g_focus->r;
+    g_focus->r = screen_rect();
+    if (g_focus->ops->resize &&
+        !g_focus->ops->resize(g_focus, width, height)) {
+        g_focus->r = old;
+        return 0;
+    }
+    wm_full_repaint();
+    return 1;
 }

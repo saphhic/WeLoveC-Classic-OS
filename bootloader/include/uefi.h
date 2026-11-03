@@ -5,7 +5,6 @@
 #ifndef WELOVEC_UEFI_H
 #define WELOVEC_UEFI_H
 
-/* Minimal, self-contained x86_64 UEFI definitions used by this loader. */
 #include <stdint.h>
 #include <stddef.h>
 
@@ -42,6 +41,7 @@ typedef struct EFI_SIMPLE_TEXT_INPUT_PROTOCOL EFI_SIMPLE_TEXT_INPUT_PROTOCOL;
 typedef struct EFI_FILE_PROTOCOL EFI_FILE_PROTOCOL;
 typedef struct EFI_SIMPLE_FILE_SYSTEM_PROTOCOL EFI_SIMPLE_FILE_SYSTEM_PROTOCOL;
 typedef struct EFI_GRAPHICS_OUTPUT_PROTOCOL EFI_GRAPHICS_OUTPUT_PROTOCOL;
+typedef struct EFI_PCI_IO_PROTOCOL EFI_PCI_IO_PROTOCOL;
 typedef struct EFI_BLOCK_IO_PROTOCOL EFI_BLOCK_IO_PROTOCOL;
 typedef struct EFI_BOOT_SERVICES EFI_BOOT_SERVICES;
 typedef struct EFI_LOADED_IMAGE_PROTOCOL EFI_LOADED_IMAGE_PROTOCOL;
@@ -226,6 +226,31 @@ struct EFI_GRAPHICS_OUTPUT_PROTOCOL {
     EFI_GRAPHICS_OUTPUT_PROTOCOL_MODE *Mode;
 };
 
+typedef EFI_STATUS (EFIAPI *EFI_PCI_IO_GET_LOCATION)(
+    EFI_PCI_IO_PROTOCOL *, UINTN *, UINTN *, UINTN *, UINTN *);
+typedef EFI_STATUS (EFIAPI *EFI_PCI_IO_GET_BAR_ATTRIBUTES)(
+    EFI_PCI_IO_PROTOCOL *, uint8_t, uint64_t *, void **);
+
+struct EFI_PCI_IO_PROTOCOL {
+    void *PollMem;
+    void *PollIo;
+    void *Mem;
+    void *Io;
+    void *Pci;
+    void *CopyMem;
+    void *Map;
+    void *Unmap;
+    void *AllocateBuffer;
+    void *FreeBuffer;
+    void *Flush;
+    EFI_PCI_IO_GET_LOCATION GetLocation;
+    void *Attributes;
+    EFI_PCI_IO_GET_BAR_ATTRIBUTES GetBarAttributes;
+    void *SetBarAttributes;
+    uint64_t RomSize;
+    void *RomImage;
+};
+
 typedef struct {
     uint32_t MediaId;
     BOOLEAN RemovableMedia, MediaPresent, LogicalPartition, ReadOnly, WriteCaching;
@@ -252,6 +277,7 @@ extern EFI_GUID gEfiLoadedImageProtocolGuid;
 extern EFI_GUID gEfiSimpleFileSystemProtocolGuid;
 extern EFI_GUID gEfiBlockIoProtocolGuid;
 extern EFI_GUID gEfiGraphicsOutputProtocolGuid;
+extern EFI_GUID gEfiPciIoProtocolGuid;
 extern EFI_GUID gEfiFileInfoGuid;
 extern EFI_GUID gEfiRngProtocolGuid;
 

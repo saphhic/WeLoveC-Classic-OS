@@ -26,6 +26,7 @@ void *allocate_pages(uint64_t page_count,
                          welovec::x86_64::mm::paging::PageFlags::Writable |
                          welovec::x86_64::mm::paging::PageFlags::NoExecute);
 bool free_pages(void *base);
+
 void *map_physical(welovec::x86_64::mm::PhysicalAddress physical, uint64_t size,
                    CachePolicy cache = CachePolicy::Uncacheable);
 bool unmap_physical(void *mapping, uint64_t size);

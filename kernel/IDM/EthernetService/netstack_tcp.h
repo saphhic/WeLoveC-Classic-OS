@@ -14,12 +14,12 @@
 
 struct ethernet_packet;
 
-// Tamaño máximo del buffer de recepción por conexión
-#define TCP_RECV_BUF_SIZE  65536  // 64 KB es más que suficiente y ahorra memoria
-// Número máximo de conexiones simultáneas
+// Maximum receive-buffer size per connection.
+#define TCP_RECV_BUF_SIZE  65536  // 64 KB is sufficient and keeps memory use low.
+// Maximum number of simultaneous connections.
 #define TCP_MAX_CONNS      8
 
-// ── API pública ────────────────────────────────────────────
+// ── Public API ──────────────────────────────────────────────
 
 /* Open a TCP connection to dest_ip:dest_port. Returns a connection ID or a
    negative errno (for example -EHOSTUNREACH, -EAGAIN, -ECONNREFUSED,
@@ -36,7 +36,7 @@ int  tcp_recv(int conn_id, uint8_t* buf, int buf_size, uint32_t max_wait_loops);
 /* Send FIN when possible and release the transport slot. */
 void tcp_close(int conn_id);
 
-// Procesa frames TCP entrantes (llamar periódicamente desde el bucle principal).
+// Process incoming TCP frames; call periodically from the main loop.
 void tcp_poll();
 void tcp_handle_packet(const ethernet_packet* packet);
 

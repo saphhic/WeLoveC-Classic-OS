@@ -177,10 +177,10 @@ void seed_ram_filesystem() {
               ".ok{color:#15803d;font-weight:bold;}"
               "a{color:#0757c8;text-decoration:underline;}"
               "</style></head><body><h1>KryptonOS HTML/CSS</h1>"
-              "<div class=\"panel\">Este archivo vive en el VFS y prueba estilos CSS.</div>"
+              "<div class=\"panel\">This file lives in the VFS and demonstrates CSS styles.</div>"
               "<p class=\"ok\">Renderer activo.</p>"
-              "<script>document.write('<p class=\"ok\">JS basico activo.</p>');</script>"
-              "<p><a href=\"http://example.com/\">Enlace de ejemplo</a></p>"
+              "<script>document.write('<p class=\"ok\">Basic JavaScript is active.</p>');</script>"
+              "<p><a href=\"http://example.com/\">Example link</a></p>"
               "</body></html>");
     save_file("/system/about.txt", "KryptonOS framebuffer desktop\nVFS: in-memory hierarchical filesystem\n");
 }
@@ -513,16 +513,19 @@ void vfs_free_file(void *data) {
     if (data) welovec::memory::heap::deallocate(data);
 }
 
-int fs_list(const char *path, VfsListEntry *entries, int max_entries) {
+int fs_list_range(const char *path, VfsListEntry *entries, int max_entries,
+                  uint64_t offset) {
     if (!entries || max_entries <= 0) return 0;
     char relative[MAX_FILENAME];
-    if (fat_path(path, relative)) return fat32_list(relative, entries, max_entries);
+    if (fat_path(path, relative))
+        return fat32_list_range(relative, entries, max_entries, offset);
     char normalized[MAX_FILENAME];
     if (!normalize_path(path && path[0] ? path : "/", normalized, sizeof(normalized), true)) return 0;
     const int directory = find_exact(normalized);
     if (directory < 0 || !file_system[directory].is_directory) return 0;
     const uint32_t prefix_length = text_length(normalized);
     int count = 0;
+    uint64_t skipped = 0;
     for (int i = 0; i < file_count && count < max_entries; ++i) {
         if (i == directory || !starts_with(file_system[i].name, normalized)) continue;
         const char *rest = file_system[i].name + prefix_length;
@@ -532,6 +535,10 @@ int fs_list(const char *path, VfsListEntry *entries, int max_entries) {
         bool direct_child = true;
         for (uint32_t j = 0; j < length; ++j) if (rest[j] == '/') direct_child = false;
         if (!direct_child || !length) continue;
+        if (skipped < offset) {
+            ++skipped;
+            continue;
+        }
         vfs_copy_text(entries[count].name, sizeof(entries[count].name), rest);
         entries[count].name[length < sizeof(entries[count].name) ? length : sizeof(entries[count].name) - 1] = '\0';
         entries[count].size = file_system[i].size;
@@ -539,6 +546,10 @@ int fs_list(const char *path, VfsListEntry *entries, int max_entries) {
         ++count;
     }
     return count;
+}
+
+int fs_list(const char *path, VfsListEntry *entries, int max_entries) {
+    return fs_list_range(path, entries, max_entries, 0);
 }
 
 bool dir(const char *path) {

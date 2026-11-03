@@ -43,6 +43,7 @@ EFI_GUID gEfiLoadedImageProtocolGuid = {0x5b1b31a1,0x9562,0x11d2,{0x8e,0x3f,0x00
 EFI_GUID gEfiSimpleFileSystemProtocolGuid = {0x964e5b22,0x6459,0x11d2,{0x8e,0x39,0x00,0xa0,0xc9,0x69,0x72,0x3b}};
 EFI_GUID gEfiBlockIoProtocolGuid = {0x964e5b21,0x6459,0x11d2,{0x8e,0x39,0x00,0xa0,0xc9,0x69,0x72,0x3b}};
 EFI_GUID gEfiGraphicsOutputProtocolGuid = {0x9042a9de,0x23dc,0x4a38,{0x96,0xfb,0x7a,0xde,0xd0,0x80,0x51,0x6a}};
+EFI_GUID gEfiPciIoProtocolGuid = {0x4cf5b200,0x68b8,0x4ca5,{0x9e,0xec,0xb2,0x3e,0x3f,0x50,0x02,0x9a}};
 EFI_GUID gEfiFileInfoGuid = {0x09576e92,0x6d3f,0x11d2,{0x8e,0x39,0x00,0xa0,0xc9,0x69,0x72,0x3b}};
 EFI_GUID gEfiRngProtocolGuid = {0x3152bca5,0xeade,0x433d,{0x86,0x2e,0xc0,0x1c,0xdc,0x29,0x1f,0x44}};
 
@@ -374,13 +375,13 @@ static void discover_storage(void) {
 static void print_memory_map(int verbose) {
     UINTN size = 0, key = 0, desc_size = 0; uint32_t version = 0;
     EFI_STATUS s = gBS->GetMemoryMap(&size, 0, &key, &desc_size, &version);
-    if (s != EFI_BUFFER_TOO_SMALL || !desc_size) { out("UEFI no ofrece el mapa de memoria.\r\n"); return; }
+    if (s != EFI_BUFFER_TOO_SMALL || !desc_size) { out("UEFI does not provide the memory map.\r\n"); return; }
     size += desc_size * 4;
     void *map = 0;
     s = alloc_pool(size, &map);
-    if (EFI_ERROR(s)) { out("Sin memoria para consultar el mapa.\r\n"); return; }
+    if (EFI_ERROR(s)) { out("Not enough memory to query the memory map.\r\n"); return; }
     s = gBS->GetMemoryMap(&size, map, &key, &desc_size, &version);
-    if (EFI_ERROR(s)) { gBS->FreePool(map); out("No se pudo leer el mapa.\r\n"); return; }
+    if (EFI_ERROR(s)) { gBS->FreePool(map); out("Could not read the memory map.\r\n"); return; }
     uint64_t usable = 0, loader = 0, boot_services = 0; uint32_t count = (uint32_t)(size / desc_size);
     EFI_MEMORY_DESCRIPTOR *d = (EFI_MEMORY_DESCRIPTOR *)map;
     for (uint32_t i = 0; i < count; ++i) {
@@ -389,36 +390,36 @@ static void print_memory_map(int verbose) {
         if (d->Type == 1 || d->Type == 2) loader += bytes;
         if (d->Type == 3 || d->Type == 4) boot_services += bytes;
         if (verbose) {
-            out("  tipo="); out_dec(d->Type); out(" inicio="); out_hex(d->PhysicalStart);
-            out(" paginas="); out_dec(d->NumberOfPages); newline();
+            out("  type="); out_dec(d->Type); out(" start="); out_hex(d->PhysicalStart);
+            out(" pages="); out_dec(d->NumberOfPages); newline();
         }
         d = (EFI_MEMORY_DESCRIPTOR *)((uint8_t *)d + desc_size);
     }
-    out("Descriptores UEFI: "); out_dec(count); newline();
-    out("Memoria convencional libre: "); out_dec(usable / (1024 * 1024)); out(" MiB\r\n");
-    out("Memoria EFI Loader (reservar objetos de handoff): "); out_dec(loader / (1024 * 1024)); out(" MiB\r\n");
-    out("Memoria Boot Services liberable tras ExitBootServices: ");
+    out("UEFI descriptors: "); out_dec(count); newline();
+    out("Free conventional memory: "); out_dec(usable / (1024 * 1024)); out(" MiB\r\n");
+    out("EFI Loader memory (handoff objects): "); out_dec(loader / (1024 * 1024)); out(" MiB\r\n");
+    out("Boot Services memory reclaimable after ExitBootServices: ");
     out_dec(boot_services / (1024 * 1024)); out(" MiB\r\n");
     gBS->FreePool(map);
 }
 
 static void print_storage(void) {
-    out("Dispositivos de bloques detectados: "); out_dec(gStorageCount); newline();
+    out("Detected block devices: "); out_dec(gStorageCount); newline();
     for (uint32_t i = 0; i < gStorageCount; ++i) {
         WelovecStorageDevice *d = &gStorage[i];
-        out("  Disco "); out_dec(i); out("  ");
-        if (d->flags & 1) out("presente "); else out("sin medio ");
-        if (d->flags & 2) out("extraible ");
-        if (d->flags & 4) out("particion ");
-        if (d->flags & 8) out("solo lectura ");
-        out("bloque="); out_dec(d->block_size);
-        out(" capacidad~="); out_dec((d->last_block + 1) * d->block_size / (1024ULL * 1024ULL)); out(" MiB\r\n");
+        out("  Disk "); out_dec(i); out("  ");
+        if (d->flags & 1) out("present "); else out("no media ");
+        if (d->flags & 2) out("removable ");
+        if (d->flags & 4) out("partition ");
+        if (d->flags & 8) out("read-only ");
+        out("block="); out_dec(d->block_size);
+        out(" capacity~="); out_dec((d->last_block + 1) * d->block_size / (1024ULL * 1024ULL)); out(" MiB\r\n");
     }
-    out("Los volúmenes con Simple File System son los candidatos de arranque.\r\n");
+    out("Volumes with Simple File System are boot candidates.\r\n");
 }
 
 static void list_kernels(void) {
-    out("Entradas de arranque: "); out_dec(gEntryCount); newline();
+    out("Boot entries: "); out_dec(gEntryCount); newline();
     for (uint32_t i = 0; i < gEntryCount; ++i) {
         out("  ["); out_dec(i); out("] "); out(gEntries[i].title);
         out("  "); out(gEntries[i].kernel); newline();
@@ -426,8 +427,8 @@ static void list_kernels(void) {
 }
 
 static void print_help(void) {
-    out("Comandos: help, kernels, disks, mem, map, boot N, reboot, poweroff, clear, exit\r\n");
-    out("mem muestra resumen; map lista descriptores UEFI. boot N carga la entrada N.\r\n");
+    out("Commands: help, kernels, disks, mem, map, boot N, reboot, poweroff, clear, exit\r\n");
+    out("mem shows a summary; map lists UEFI descriptors. boot N loads entry N.\r\n");
 }
 
 static int read_line(char *buffer, UINTN cap) {
@@ -472,8 +473,8 @@ static void shell(void) {
             uint32_t index;
             if (parse_u32(line + 5, &index) && index < gEntryCount) {
                 boot_entry(index);
-            } else out("Indice de kernel no valido.\r\n");
-        } else if (*line) { out("Comando desconocido; escribe help.\r\n"); }
+            } else out("Invalid kernel index.\r\n");
+        } else if (*line) { out("Unknown command; type help.\r\n"); }
     }
 }
 
@@ -483,19 +484,19 @@ static void menu(void) {
     for (;;) {
         clear_screen(); set_color(0x0b);
         out("WeLoveC UEFI Boot Manager"); newline();
-        set_color(0x07); out("UEFI x86_64  |  discos: "); out_dec(gStorageCount); out("  |  volúmenes: "); out_dec(gFilesystemCount); newline();
+        set_color(0x07); out("UEFI x86_64  |  disks: "); out_dec(gStorageCount); out("  |  volumes: "); out_dec(gFilesystemCount); newline();
         out("------------------------------------------------------------\r\n");
         if (!gEntryCount) {
-            out("No hay kernels ELF configurados.\r\n");
-            out("Instala un kernel y crea \\EFI\\WELOVEC\\boot.cfg.\r\n");
+            out("No ELF kernels are configured.\r\n");
+            out("Install a kernel and create \\EFI\\WELOVEC\\boot.cfg.\r\n");
         }
         for (uint32_t i = 0; i < gEntryCount; ++i) {
             if (i == selected) { set_color(0x70); out(" > "); out(gEntries[i].title); out("  "); out(gEntries[i].kernel); out(" "); set_color(0x07); }
             else { out("   "); out(gEntries[i].title); out("  "); out(gEntries[i].kernel); }
             newline();
         }
-        out("\r\nFlechas: elegir   Enter: arrancar   S: shell   M: memoria   D: discos   Q: salir\r\n");
-        if (gEntryCount && gTimeout) { out("Arranque automatico en "); out_dec(gTimeout - ticks); out(" s\r\n"); }
+        out("\r\nArrows: select   Enter: boot   S: shell   M: memory   D: disks   Q: quit\r\n");
+        if (gEntryCount && gTimeout) { out("Automatic boot in "); out_dec(gTimeout - ticks); out(" s\r\n"); }
         for (uint32_t tenth = 0; tenth < 10; ++tenth) {
             EFI_INPUT_KEY key;
             EFI_STATUS s = gST->ConIn->ReadKeyStroke(gST->ConIn, &key);
@@ -504,8 +505,8 @@ static void menu(void) {
                 else if (key.ScanCode == SCAN_DOWN && gEntryCount) selected = (selected + 1) % gEntryCount;
                 else if (key.UnicodeChar == '\r' && gEntryCount) { boot_entry(selected); }
                 else if (key.UnicodeChar == 's' || key.UnicodeChar == 'S') { shell(); break; }
-                else if (key.UnicodeChar == 'm' || key.UnicodeChar == 'M') { clear_screen(); print_memory_map(1); out("Pulsa una tecla para volver."); UINTN idx; gBS->WaitForEvent(1, &gST->ConIn->WaitForKey, &idx); gST->ConIn->ReadKeyStroke(gST->ConIn, &key); break; }
-                else if (key.UnicodeChar == 'd' || key.UnicodeChar == 'D') { clear_screen(); print_storage(); out("Pulsa una tecla para volver."); UINTN idx; gBS->WaitForEvent(1, &gST->ConIn->WaitForKey, &idx); gST->ConIn->ReadKeyStroke(gST->ConIn, &key); break; }
+                else if (key.UnicodeChar == 'm' || key.UnicodeChar == 'M') { clear_screen(); print_memory_map(1); out("Press any key to return."); UINTN idx; gBS->WaitForEvent(1, &gST->ConIn->WaitForKey, &idx); gST->ConIn->ReadKeyStroke(gST->ConIn, &key); break; }
+                else if (key.UnicodeChar == 'd' || key.UnicodeChar == 'D') { clear_screen(); print_storage(); out("Press any key to return."); UINTN idx; gBS->WaitForEvent(1, &gST->ConIn->WaitForKey, &idx); gST->ConIn->ReadKeyStroke(gST->ConIn, &key); break; }
                 else if (key.UnicodeChar == 'q' || key.UnicodeChar == 'Q' || key.ScanCode == SCAN_ESC) { return; }
                 break;
             }
@@ -959,6 +960,115 @@ static void fill_entropy(WelovecBootInfo *info) {
         info->flags |= WELOVEC_BOOT_FLAG_RNG_VALID;
 }
 
+static uint16_t read_u16_local(const uint8_t *bytes) {
+    return (uint16_t)bytes[0] | ((uint16_t)bytes[1] << 8);
+}
+
+static uint64_t read_u64_local(const uint8_t *bytes) {
+    uint64_t value = 0;
+    for (uint32_t i = 0; i < 8; ++i)
+        value |= (uint64_t)bytes[i] << (i * 8);
+    return value;
+}
+
+static int parse_pci_bar_resources(const uint8_t *descriptors,
+                                   uint64_t *base_out, uint64_t *size_out) {
+    if (!descriptors || !base_out || !size_out) return 0;
+    uint32_t offset = 0;
+    int found_memory = 0;
+    for (uint32_t count = 0; count < 16 && offset < 512; ++count) {
+        if (offset > 509) return 0;
+        const uint8_t tag = descriptors[offset];
+        if (tag == 0x79) return found_memory;
+        if (tag != 0x8a) return 0;
+
+        const uint16_t payload_length = read_u16_local(&descriptors[offset + 1]);
+        if (payload_length != 0x2b ||
+            (uint32_t)payload_length + 3 > 512 - offset) return 0;
+        const uint8_t *descriptor = &descriptors[offset];
+        const uint8_t resource_type = descriptor[3];
+        if (resource_type == 0) {
+            const uint64_t minimum = read_u64_local(&descriptor[14]);
+            const uint64_t maximum = read_u64_local(&descriptor[22]);
+            const uint64_t translation = read_u64_local(&descriptor[30]);
+            const uint64_t length = read_u64_local(&descriptor[38]);
+            if (found_memory || !length || translation != 0 ||
+                maximum < minimum || maximum - minimum < length - 1 ||
+                minimum > UINT64_MAX - length) return 0;
+            *base_out = minimum;
+            *size_out = length;
+            found_memory = 1;
+        }
+        offset += (uint32_t)payload_length + 3;
+    }
+    return 0;
+}
+
+static void capture_display_pci_resources(
+    WelovecBootInfo *info, EFI_GRAPHICS_OUTPUT_PROTOCOL *gop) {
+    if (!info || !gop || !gBS->LocateHandleBuffer || !gBS->HandleProtocol ||
+        !gBS->FreePool)
+        return;
+
+    UINTN handle_count = 0;
+    EFI_HANDLE *handles = 0;
+    EFI_STATUS status = gBS->LocateHandleBuffer(
+        ByProtocol, &gEfiGraphicsOutputProtocolGuid, 0,
+        &handle_count, &handles);
+    if (EFI_ERROR(status) || !handles) return;
+
+    for (UINTN i = 0; i < handle_count; ++i) {
+        EFI_GRAPHICS_OUTPUT_PROTOCOL *handle_gop = 0;
+        if (EFI_ERROR(gBS->HandleProtocol(
+                handles[i], &gEfiGraphicsOutputProtocolGuid,
+                (void **)&handle_gop)) || handle_gop != gop) continue;
+
+        EFI_PCI_IO_PROTOCOL *pci_io = 0;
+        if (EFI_ERROR(gBS->HandleProtocol(
+                handles[i], &gEfiPciIoProtocolGuid, (void **)&pci_io)) ||
+            !pci_io || !pci_io->GetLocation || !pci_io->GetBarAttributes)
+            break;
+
+        UINTN segment = 0, bus = 0, slot = 0, function = 0;
+        if (EFI_ERROR(pci_io->GetLocation(
+                pci_io, &segment, &bus, &slot, &function)) ||
+            segment > UINT16_MAX || bus > UINT8_MAX || slot > UINT8_MAX ||
+            function > UINT8_MAX) break;
+
+        WelovecDisplayPciInfo *display = &info->display_pci;
+        display->segment = (uint16_t)segment;
+        display->bus = (uint8_t)bus;
+        display->slot = (uint8_t)slot;
+        display->function = (uint8_t)function;
+        display->bar_count = 6;
+        display->valid = 1;
+
+        for (uint8_t bar = 0; bar < 6; ++bar) {
+            uint64_t supports = 0;
+            void *resources = 0;
+            const EFI_STATUS bar_status = pci_io->GetBarAttributes(
+                pci_io, bar, &supports, &resources);
+            if (resources) {
+                uint64_t base = 0, size = 0;
+                if (!EFI_ERROR(bar_status) &&
+                    parse_pci_bar_resources(resources, &base, &size)) {
+                    WelovecPciBarResource *resource = &display->bars[bar];
+                    resource->base = base;
+                    resource->size = size;
+                    resource->type = WELOVEC_PCI_RESOURCE_MEMORY;
+                    resource->flags = WELOVEC_PCI_RESOURCE_VALID;
+                }
+                gBS->FreePool(resources);
+            }
+        }
+
+        info->flags |= WELOVEC_BOOT_FLAG_DISPLAY_PCI_VALID;
+        break;
+    }
+
+    gBS->FreePool(handles);
+}
+
 static EFI_STATUS finalize_memory_map(WelovecBootInfo *info, PageAllocation *map_alloc, uint64_t *map_size,
                                       uint64_t *map_key, uint64_t *desc_size, uint32_t *desc_version) {
     UINTN size = map_alloc->pages * PAGE_SIZE;
@@ -980,23 +1090,23 @@ void fatal_halt(void);
 static void boot_entry(uint32_t index) {
     if (index >= gEntryCount) return;
     BootEntry *entry = &gEntries[index];
-    out("Cargando "); out(entry->title); out("...\r\n");
+    out("Loading "); out(entry->title); out("...\r\n");
     PageAllocation image = {0}, initrd = {0}, fat32_image = {0}, info_pages = {0}, mmap_pages = {0}, cmdline = {0}, rsdp_pages = {0};
     gPageTableAllocCount = 0;
     uint64_t image_size = 0, initrd_size = 0, fat32_image_size = 0;
     EFI_STATUS s = read_whole_file(entry->filesystem, entry->kernel, MAX_ELF_FILE, &image, &image_size);
-    if (EFI_ERROR(s)) { out("Error: no se pudo leer el kernel (EFI="); out_hex(s); out(").\r\n"); return; }
+    if (EFI_ERROR(s)) { out("Error: could not read the kernel (EFI="); out_hex(s); out(").\r\n"); return; }
     ElfSegment segments[WELOVEC_BOOTINFO_MAX_SEGMENTS]; memset_local(segments, 0, sizeof(segments));
     uint32_t segment_count = 0; uint64_t kernel_entry = 0, pmin = 0, pmax = 0;
     s = load_elf(image.address, image_size, segments, &segment_count, &kernel_entry, &pmin, &pmax);
-    if (EFI_ERROR(s)) { out("Error: ELF64 no compatible (se requiere ET_EXEC x86_64).\r\n"); free_pages(&image); return; }
+    if (EFI_ERROR(s)) { out("Error: incompatible ELF64 image (ET_EXEC x86_64 required).\r\n"); free_pages(&image); return; }
     s = allocate_kernel_segments(image.address, segments, segment_count);
     free_pages(&image);
-    if (EFI_ERROR(s)) { out("Error: no se pudo reservar la imagen ELF en sus direcciones fisicas.\r\n"); return; }
+    if (EFI_ERROR(s)) { out("Error: could not allocate ELF segments at their physical addresses.\r\n"); return; }
     if (entry->initrd[0]) {
         s = read_whole_file(entry->filesystem, entry->initrd, MAX_INITRD_FILE, &initrd, &initrd_size);
         if (EFI_ERROR(s)) {
-            out("Error: no se pudo leer el initrd configurado.\r\n");
+            out("Error: could not read the configured initrd.\r\n");
             for (uint32_t i=0; i<segment_count; ++i) gBS->FreePages(segments[i].alloc_base, segments[i].alloc_pages);
             return;
         }
@@ -1005,12 +1115,12 @@ static void boot_entry(uint32_t index) {
         s = read_whole_file(entry->filesystem, entry->fat32_image,
                             MAX_FILESYSTEM_IMAGE, &fat32_image, &fat32_image_size);
         if (EFI_ERROR(s)) {
-            out("Error: no se pudo leer la imagen FAT32 configurada.\r\n");
+            out("Error: could not read the configured FAT32 image.\r\n");
             goto boot_fail;
         }
     }
     s = alloc_any_pages((sizeof(WelovecBootInfo) + PAGE_SIZE - 1) / PAGE_SIZE, &info_pages);
-    if (EFI_ERROR(s)) { out("Error: sin memoria para BootInfo.\r\n"); goto boot_fail; }
+    if (EFI_ERROR(s)) { out("Error: not enough memory for BootInfo.\r\n"); goto boot_fail; }
     WelovecBootInfo *info = (WelovecBootInfo *)(uintptr_t)info_pages.address;
     memset_local(info, 0, sizeof(*info));
     info->magic = WELOVEC_BOOTINFO_MAGIC; info->version = WELOVEC_BOOTINFO_VERSION; info->size = sizeof(*info);
@@ -1039,7 +1149,7 @@ static void boot_entry(uint32_t index) {
     }
     uint64_t command_line_address = 0;
     s = alloc_any_pages(1, &cmdline);
-    if (EFI_ERROR(s)) { out("Error: sin memoria para la linea de comandos.\r\n"); goto boot_fail; }
+    if (EFI_ERROR(s)) { out("Error: not enough memory for the command line.\r\n"); goto boot_fail; }
     char *cmd_dst = (char *)(uintptr_t)cmdline.address;
     if (entry->command_line[0]) {
         str_copy(cmd_dst, PAGE_SIZE, entry->command_line);
@@ -1077,23 +1187,24 @@ static void boot_entry(uint32_t index) {
         memcpy_local(info->framebuffer.pixel_masks, gop->Mode->Info->PixelInformation,
                      sizeof(info->framebuffer.pixel_masks));
         info->flags |= WELOVEC_BOOT_FLAG_GOP_VALID;
+        capture_display_pci_resources(info, gop);
     }
     fill_entropy(info);
     if (gNxSupported) info->flags |= WELOVEC_BOOT_FLAG_NX_ENABLED;
     s = alloc_any_pages(MAX_MEMORY_MAP_BYTES / PAGE_SIZE, &mmap_pages);
-    if (EFI_ERROR(s)) { out("Error: no se pudo reservar el mapa UEFI.\r\n"); goto boot_fail; }
+    if (EFI_ERROR(s)) { out("Error: could not allocate the UEFI memory map.\r\n"); goto boot_fail; }
     uint64_t map_size = 0, map_key = 0, desc_size = 0; uint32_t desc_version = 0;
     s = finalize_memory_map(info, &mmap_pages, &map_size, &map_key, &desc_size, &desc_version);
-    if (EFI_ERROR(s)) { out("Error: no se pudo consultar el mapa UEFI para crear las tablas.\r\n"); goto boot_fail; }
+    if (EFI_ERROR(s)) { out("Error: could not query the UEFI map to build page tables.\r\n"); goto boot_fail; }
     uint64_t page_root = 0;
     s = build_page_tables(&page_root, (uint64_t)(uintptr_t)&enter_kernel,
                           (uint64_t)(uintptr_t)&fatal_halt, segments, segment_count,
                           mmap_pages.address, map_size, desc_size, &info->framebuffer);
-    if (EFI_ERROR(s)) { out("Error: no se pudieron crear las tablas de paginas.\r\n"); goto boot_fail; }
+    if (EFI_ERROR(s)) { out("Error: could not create page tables.\r\n"); goto boot_fail; }
     info->page_table_root = page_root;
     for (unsigned retry = 0; retry < 4; ++retry) {
         s = finalize_memory_map(info, &mmap_pages, &map_size, &map_key, &desc_size, &desc_version);
-        if (EFI_ERROR(s)) { out("Error: no se pudo obtener el mapa de memoria final.\r\n"); goto boot_fail; }
+        if (EFI_ERROR(s)) { out("Error: could not obtain the final memory map.\r\n"); goto boot_fail; }
         s = gBS->ExitBootServices(gImage, map_key);
         if (s == EFI_SUCCESS) {
             const uint64_t cpu_features = (gNxSupported ? 1u : 0u) |
@@ -1103,7 +1214,7 @@ static void boot_entry(uint32_t index) {
         }
         if (s != EFI_INVALID_PARAMETER) break;
     }
-    out("Error: ExitBootServices fallo (EFI="); out_hex(s); out(").\r\n");
+    out("Error: ExitBootServices failed (EFI="); out_hex(s); out(").\r\n");
 boot_fail:
     if (mmap_pages.address) free_pages(&mmap_pages);
     if (rsdp_pages.address) free_pages(&rsdp_pages);

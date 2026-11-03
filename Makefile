@@ -12,6 +12,29 @@ ESP_SIZE ?= 96M
 USERSPACE_SIZE ?= 64M
 USER_BUILD_DIR := $(BUILD_DIR)/userland
 USER_INIT_ELF := $(USER_BUILD_DIR)/init.elf
+GPU_FIRMWARE_DIR ?= third_party/firmware/amdgpu
+GPU_FIRMWARE_LICENSE := third_party/firmware/LICENSE.amdgpu
+GPU_FIRMWARE_README := third_party/firmware/README.md
+GPU_FIRMWARE_MANIFEST := kernel/IDM/DisplayService/Drivers/amd/rembrandt_firmware_manifest.hpp
+GPU_FIRMWARE_GENERATOR := tools/gpu/generate_rembrandt_firmware_manifest.py
+GPU_FIRMWARE_NAMES := yellow_carp_toc.bin yellow_carp_ta.bin \
+	yellow_carp_asd.bin \
+	yellow_carp_pfp.bin yellow_carp_me.bin yellow_carp_ce.bin \
+	yellow_carp_mec.bin yellow_carp_mec2.bin yellow_carp_rlc.bin \
+	yellow_carp_sdma.bin yellow_carp_dmcub.bin yellow_carp_vcn.bin
+GPU_FIRMWARE_FILES := $(foreach name,$(GPU_FIRMWARE_NAMES),$(wildcard $(GPU_FIRMWARE_DIR)/$(name)))
+ifneq ($(strip $(GPU_FIRMWARE_DIR)),)
+define GPU_FIRMWARE_IMAGE_RECIPE
+	$(MMD) -i $@ ::/userspace/firmware
+	$(MMD) -i $@ ::/userspace/firmware/amdgpu
+	$(MCOPY) -i $@ $(GPU_FIRMWARE_LICENSE) ::/userspace/firmware/LICENSE.amdgpu
+	$(MCOPY) -i $@ $(GPU_FIRMWARE_README) ::/userspace/firmware/README.md
+	@set -e; for firmware_file in $(GPU_FIRMWARE_FILES); do \
+		name=$${firmware_file##*/}; \
+		$(MCOPY) -i $@ "$$firmware_file" "::/userspace/firmware/amdgpu/$$name"; \
+	done
+endef
+endif
 USER_FBSTDIO_OBJ := $(USER_BUILD_DIR)/fbstdio.o
 USER_EXECCONF_OBJ := $(USER_BUILD_DIR)/exec_conf.o
 USER_TLS_BUILD_DIR := $(USER_BUILD_DIR)/tls
@@ -45,11 +68,38 @@ USERLAND_BIN_FILES := $(shell find userland/bin -type f -print | sort)
 USERLAND_BIN_DIRS := $(shell find userland/bin -type d -print | sort)
 PROJECT_SOURCE_FILES := $(shell find bootloader kernel userland -type d \( -name build -o -name .git \) -prune -o -type f -print | sort)
 PROJECT_SOURCE_DIRS := $(shell find bootloader kernel userland -type d \( -name build -o -name .git \) -prune -o -type d -print | sort)
+ifneq ($(strip $(GPU_FIRMWARE_DIR)),)
+PROJECT_SOURCE_FILES += $(GPU_FIRMWARE_MANIFEST)
+endif
+PROJECT_SOURCE_FILES := $(sort $(PROJECT_SOURCE_FILES))
 # Keep the versioned sources while publishing the executable at /bin/shell.
 USERLAND_SHELL_SOURCE_DIR := userland/bin/shell_experimental
 USERLAND_SHELL_SOURCE_NAME := $(notdir $(USERLAND_SHELL_SOURCE_DIR))
 USERLAND_PROGRAM_DIRS := $(filter-out $(USERLAND_SHELL_SOURCE_DIR),$(shell find userland/bin -mindepth 1 -maxdepth 1 -type d -print | sort))
 USERLAND_PROGRAM_NAMES := $(notdir $(patsubst %/,%,$(USERLAND_PROGRAM_DIRS)))
+DESKTOP_APP_NAMES := calculator code editor files geometry sysinfo taskmgr
+DESKTOP_APP_MODULE_calculator := calc
+DESKTOP_APP_MODULE_code := code
+DESKTOP_APP_MODULE_editor := editor
+DESKTOP_APP_MODULE_files := files
+DESKTOP_APP_MODULE_geometry := geometry
+DESKTOP_APP_MODULE_sysinfo := sysinfo
+DESKTOP_APP_MODULE_taskmgr := taskmgr
+DESKTOP_APP_EXCLUDED_MODULES := calc code editor files geometry sysinfo taskmgr standalone standalone_stubs
+DESKTOP_APP_EXCLUDED_OBJECTS := $(foreach module,$(DESKTOP_APP_EXCLUDED_MODULES),$(USER_BUILD_DIR)/bin/desktop/apps/$(module).o)
+DESKTOP_APP_RUNTIME_OBJECTS := \
+	$(USER_BUILD_DIR)/bin/desktop/apps/standalone.o \
+	$(USER_BUILD_DIR)/bin/desktop/apps/standalone_stubs.o \
+	$(USER_BUILD_DIR)/bin/desktop/apps/program.o \
+	$(USER_BUILD_DIR)/bin/desktop/src/dialog.o \
+	$(USER_BUILD_DIR)/bin/desktop/src/font.o \
+	$(USER_BUILD_DIR)/bin/desktop/src/fsutil.o \
+	$(USER_BUILD_DIR)/bin/desktop/src/gfx.o \
+	$(USER_BUILD_DIR)/bin/desktop/src/input.o \
+	$(USER_BUILD_DIR)/bin/desktop/src/launch.o \
+	$(USER_BUILD_DIR)/bin/desktop/src/ui.o \
+	$(USER_BUILD_DIR)/bin/desktop/src/util.o \
+	$(USER_BUILD_DIR)/bin/desktop/src/wm.o
 USER_CC ?= clang
 USER_CXX ?= clang++
 USER_LD ?= ld.lld
@@ -61,9 +111,9 @@ userland_program_objects = \
 	$(patsubst userland/bin/%.S,$(USER_BUILD_DIR)/bin/%.o,$(if $(filter shell,$(1)),$(filter $(USERLAND_SHELL_SOURCE_DIR)/%.S,$(USERLAND_BIN_FILES)),$(filter userland/bin/$(1)/%.S,$(USERLAND_BIN_FILES))))
 
 define USERLAND_PROGRAM_RULES
-USERLAND_PROGRAM_OBJECTS_$(1) := $(call userland_program_objects,$(1))
+USERLAND_PROGRAM_OBJECTS_$(1) := $(filter-out $(if $(filter desktop,$(1)),$(DESKTOP_APP_EXCLUDED_OBJECTS)),$(call userland_program_objects,$(1))) $(if $(filter $(1),$(DESKTOP_APP_NAMES)),$(USER_BUILD_DIR)/bin/desktop/apps/$$(DESKTOP_APP_MODULE_$(1)).o)
 USERLAND_PROGRAM_ELF_$(1) := $(USER_BUILD_DIR)/bin/$(1)/$(1).elf
-USERLAND_PROGRAM_EXTRA_$(1) := $(if $(filter browser,$(1)),$(USER_WEB_HTTP_OBJ) $(USER_WEB_HTML_TEXT_OBJ) $(USER_WEB_URL_OBJ) $(USER_WEB_STRINGS_OBJ) $(USER_TLS_CLIENT_OBJ) $(USER_TLS_PORT_OBJ) $(NETSURF_HUBBUB_LIB) $(NETSURF_PARSERUTILS_LIB) $(MBEDTLS_LIBS))
+USERLAND_PROGRAM_EXTRA_$(1) := $(if $(filter browser,$(1)),$(USER_WEB_HTTP_OBJ) $(USER_WEB_HTML_TEXT_OBJ) $(USER_WEB_URL_OBJ) $(USER_WEB_STRINGS_OBJ) $(USER_TLS_CLIENT_OBJ) $(USER_TLS_PORT_OBJ) $(NETSURF_HUBBUB_LIB) $(NETSURF_PARSERUTILS_LIB) $(MBEDTLS_LIBS)) $(if $(filter $(1),$(DESKTOP_APP_NAMES)),$(DESKTOP_APP_RUNTIME_OBJECTS))
 
 $$(USERLAND_PROGRAM_ELF_$(1)): $$(USER_BUILD_DIR)/start.o \
 	$$(USERLAND_PROGRAM_OBJECTS_$(1)) $$(USER_FBSTDIO_OBJ) \
@@ -110,8 +160,15 @@ ESP_FILES := bootloader/build/ESP/EFI/BOOT/BOOTX64.EFI \
 .PHONY: all kernel bootloader demo userland iso check-iso-tools clean help
 all: iso
 
-kernel:
+kernel: $(if $(strip $(GPU_FIRMWARE_DIR)),$(GPU_FIRMWARE_MANIFEST))
 	$(MAKE) -C kernel all
+
+ifneq ($(strip $(GPU_FIRMWARE_DIR)),)
+$(GPU_FIRMWARE_MANIFEST): $(GPU_FIRMWARE_GENERATOR) $(GPU_FIRMWARE_FILES)
+	python3 $(GPU_FIRMWARE_GENERATOR) "$(GPU_FIRMWARE_DIR)" \
+		--vfs-prefix /userspace/firmware \
+		--output "$@"
+endif
 
 bootloader:
 	$(MAKE) -C bootloader all
@@ -167,6 +224,7 @@ $(USER_BUILD_DIR)/bin/%.o: userland/bin/%.c
 	$(USER_CC) -target x86_64-unknown-elf -m64 -mcmodel=small -mno-red-zone \
 		-ffreestanding -fno-builtin -fno-pic -fno-pie -fno-stack-protector \
 		-fno-asynchronous-unwind-tables -fno-unwind-tables -Wall -Wextra \
+		$(if $(filter desktop_addon/%,$*),-Iuserland/bin/desktop_addon/userland/bin,) \
 		-Ikernel/include -Iuserland -Iuserland/bin -std=c11 -MMD -MP -c $< -o $@
 
 $(MBEDTLS_EXTRACT_STAMP): $(MBEDTLS_ARCHIVE)
@@ -317,7 +375,9 @@ $(USER_BUILD_DIR)/bin/%.o: userland/bin/%.cpp
 	$(USER_CXX) -target x86_64-unknown-elf -m64 -mcmodel=small -mno-red-zone \
 		-ffreestanding -fno-builtin -fno-pic -fno-pie -fno-stack-protector \
 		-fno-asynchronous-unwind-tables -fno-unwind-tables -fno-exceptions \
-		-fno-rtti -Wall -Wextra -Ikernel/include -Iuserland -Iuserland/bin \
+		-fno-rtti -Wall -Wextra \
+		$(if $(filter desktop_addon/%,$*),-Iuserland/bin/desktop_addon/userland/bin,) \
+		-Ikernel/include -Iuserland -Iuserland/bin \
 		-std=c++20 -MMD -MP -c $< -o $@
 
 $(USER_BUILD_DIR)/bin/%.o: userland/bin/%.S
@@ -358,8 +418,9 @@ $(USER_INIT_ELF): $(USER_BUILD_DIR)/start.o $(USER_BUILD_DIR)/init.o \
 		-T userland/user.ld -o $@ $(USER_BUILD_DIR)/start.o \
 		$(USER_BUILD_DIR)/init.o $(USER_FBSTDIO_OBJ) $(USER_EXECCONF_OBJ)
 
-$(USERSPACE_IMAGE): Makefile welovec_classic_documentation.md \
-		BROWSER_READINESS.md $(PROJECT_SOURCE_FILES) \
+$(USERSPACE_IMAGE): Makefile dev_info/welovec_classic_documentation.md \
+		dev_info/BROWSER_READINESS.md $(PROJECT_SOURCE_FILES) \
+		$(if $(strip $(GPU_FIRMWARE_DIR)),$(GPU_FIRMWARE_MANIFEST) $(GPU_FIRMWARE_FILES) $(GPU_FIRMWARE_LICENSE) $(GPU_FIRMWARE_README)) \
 		$(USER_INIT_ELF) userland/startup.conf \
 		$(USERLAND_BIN_FILES) $(USERLAND_BIN_DIRS) $(USERLAND_PROGRAM_ELFS) \
 		$(USERLAND_SHELL_COMMAND_ELFS) | check-iso-tools
@@ -368,6 +429,7 @@ $(USERSPACE_IMAGE): Makefile welovec_classic_documentation.md \
 	truncate -s $(USERSPACE_SIZE) $@
 	$(MKFS_FAT) -F 32 -n WLCUSER $@
 	$(MMD) -i $@ ::/userspace
+	$(GPU_FIRMWARE_IMAGE_RECIPE)
 	$(MMD) -i $@ ::/userspace/bin
 	@set -e; for source_dir in $(PROJECT_SOURCE_DIRS); do \
 		$(MMD) -i $@ "::/$$source_dir"; \

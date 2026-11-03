@@ -54,6 +54,7 @@ struct __attribute__((packed)) syscall_regs_t {
 #define SYS_FS_READ 18
 #define SYS_FS_WRITE 19
 #define SYS_FS_LIST 20
+#define SYS_FS_LIST_RANGE 85
 #define SYS_FS_MKDIR 21
 #define SYS_FS_UNLINK 22
 #define SYS_GETTICKS 23

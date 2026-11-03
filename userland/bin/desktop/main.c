@@ -23,7 +23,8 @@
  *   src/dialog.c  modal prompt / confirm / message
  *   src/launch.c  windowed ELF runs (terminal, programs), power
  *   src/fsutil.c  directory listing and file copy helpers
- *   apps/ *.c     Files, Editor, Task manager, System info, Calculator
+ *   apps/program.c manages windowed ELF children; each built-in tool has its
+ *                  own executable under userland/bin/
  */
 
 struct desk_state g_desk;

@@ -23,6 +23,7 @@
 #define SHELL_HELP_OUTPUT_CAPACITY 8192u
 #define SHELL_HELP_SYSCALL_CHUNK 128u
 #define SHELL_HELP_MAX_SPANS (WELOVEC_USER_FS_MAX_ENTRIES * 4u + 4u)
+#define SHELL_APPS_PATH_CAPACITY WELOVEC_USER_PATH_MAX
 
 struct shell_help_span {
     uint32_t offset;
@@ -210,6 +211,8 @@ static void show_help(void) {
     }
     (void)help_append("  Installed programs are under /userspace/bin and /userspace/bin/shell/bin.\n",
                       COLOR_YELLOW, &output_length, &span_count);
+    (void)help_append("  apps recursively lists every .elf file in the filesystem.\n",
+                      COLOR_YELLOW, &output_length, &span_count);
     shell_print("Available commands\n", COLOR_GREEN);
     print_help_output(span_count);
 }
@@ -217,37 +220,118 @@ static void show_help(void) {
 static int has_elf_extension(const char *name) {
     uint32_t length = 0;
     while (name && name[length]) ++length;
-    return length > 4 && name[length - 4] == '.' && name[length - 3] == 'e' &&
-           name[length - 2] == 'l' && name[length - 1] == 'f';
+    if (length <= 4 || name[length - 4] != '.') return 0;
+    char e = name[length - 3], l = name[length - 2], f = name[length - 1];
+    if (e >= 'A' && e <= 'Z') e = (char)(e + ('a' - 'A'));
+    if (l >= 'A' && l <= 'Z') l = (char)(l + ('a' - 'A'));
+    if (f >= 'A' && f <= 'Z') f = (char)(f + ('a' - 'A'));
+    return e == 'e' && l == 'l' && f == 'f';
 }
 
 static void show_apps(void) {
-    static const char *const directories[] = {
-        "/userspace/bin",
-        "/userspace/bin/shell",
-        "/userspace/bin/shell/bin",
-        "/userspace/bin/test_shell"
-    };
-    int found = 0;
-    shell_print("Installed ELF programs\n", COLOR_GREEN);
-    for (uint32_t directory = 0;
-        directory < sizeof(directories) / sizeof(directories[0]); ++directory) {
-        const int64_t count = welovec_fs_list(
-            directories[directory], g_command_entries,
-            WELOVEC_USER_FS_MAX_ENTRIES);
-        if (count < 0) continue;
-        for (int64_t index = 0; index < count; ++index) {
-            if (g_command_entries[index].type != WELOVEC_USER_FS_FILE ||
-                !has_elf_extension(g_command_entries[index].name)) continue;
-            shell_print("  ", COLOR_WHITE);
-            shell_print(directories[directory], COLOR_YELLOW);
-            shell_print("/", COLOR_WHITE);
-            shell_print(g_command_entries[index].name, COLOR_WHITE);
-            shell_print("\n", COLOR_WHITE);
-            found = 1;
+    uint32_t capacity = 16;
+    uint32_t queued = 0;
+    uint32_t next = 0;
+    uint32_t found = 0;
+    int incomplete = 0;
+    char (*directories)[SHELL_APPS_PATH_CAPACITY] =
+        (char (*)[SHELL_APPS_PATH_CAPACITY])welovec_mmap(
+            (uint64_t)capacity * SHELL_APPS_PATH_CAPACITY);
+    if (!directories) {
+        shell_print("apps: out of memory while scanning the filesystem\n",
+                    COLOR_RED);
+        return;
+    }
+    copy_text(directories[queued++], SHELL_APPS_PATH_CAPACITY, "/");
+    shell_print("ELF files found in the filesystem\n", COLOR_GREEN);
+
+    while (next < queued) {
+        char current_directory[SHELL_APPS_PATH_CAPACITY];
+        copy_text(current_directory, sizeof(current_directory),
+                  directories[next++]);
+        const char *directory = current_directory;
+        uint64_t offset = 0;
+        for (;;) {
+            const int64_t count = welovec_fs_list_range(
+                directory, g_command_entries, WELOVEC_USER_FS_MAX_ENTRIES,
+                offset);
+            if (count < 0) {
+                incomplete = 1;
+                break;
+            }
+            if (!count) break;
+            for (int64_t index = 0; index < count; ++index) {
+                const struct welovec_user_dir_entry *entry =
+                    &g_command_entries[index];
+                char path[SHELL_APPS_PATH_CAPACITY];
+                uint32_t used = 0;
+                while (directory[used] && used + 1 < sizeof(path)) {
+                    path[used] = directory[used];
+                    ++used;
+                }
+                if (directory[used]) {
+                    incomplete = 1;
+                    continue;
+                }
+                if (used > 1 && path[used - 1] == '/') --used;
+                if (used && path[used - 1] != '/') {
+                    if (used + 1 >= sizeof(path)) {
+                        incomplete = 1;
+                        continue;
+                    }
+                    path[used++] = '/';
+                }
+                uint32_t name_index = 0;
+                while (entry->name[name_index] && used + 1 < sizeof(path))
+                    path[used++] = entry->name[name_index++];
+                if (entry->name[name_index]) {
+                    incomplete = 1;
+                    continue;
+                }
+                path[used] = '\0';
+
+                if (entry->type == WELOVEC_USER_FS_DIRECTORY) {
+                    if (queued == capacity) {
+                        if (capacity > UINT32_MAX / 2u) {
+                            incomplete = 1;
+                            continue;
+                        }
+                        const uint32_t new_capacity = capacity * 2u;
+                        char (*grown)[SHELL_APPS_PATH_CAPACITY] =
+                            (char (*)[SHELL_APPS_PATH_CAPACITY])welovec_mmap(
+                                (uint64_t)new_capacity *
+                                SHELL_APPS_PATH_CAPACITY);
+                        if (!grown) {
+                            incomplete = 1;
+                            continue;
+                        }
+                        for (uint32_t row = 0; row < queued; ++row)
+                            copy_text(grown[row], SHELL_APPS_PATH_CAPACITY,
+                                      directories[row]);
+                        (void)welovec_munmap(
+                            directories,
+                            (uint64_t)capacity * SHELL_APPS_PATH_CAPACITY);
+                        directories = grown;
+                        capacity = new_capacity;
+                    }
+                    copy_text(directories[queued++],
+                              SHELL_APPS_PATH_CAPACITY, path);
+                } else if (has_elf_extension(entry->name)) {
+                    shell_print("  ", COLOR_WHITE);
+                    shell_print(path, COLOR_YELLOW);
+                    shell_print("\n", COLOR_WHITE);
+                    found = 1;
+                }
+            }
+            offset += (uint64_t)count;
+            if ((uint64_t)count < WELOVEC_USER_FS_MAX_ENTRIES) break;
         }
     }
-    if (!found) shell_print("  No installed ELF programs were found.\n", COLOR_RED);
+    if (!found) shell_print("  No ELF files were found.\n", COLOR_RED);
+    if (incomplete)
+        shell_print("  Some paths could not be scanned.\n", COLOR_YELLOW);
+    (void)welovec_munmap(
+        directories, (uint64_t)capacity * SHELL_APPS_PATH_CAPACITY);
 }
 
 static void reboot_virtual_machine(void) {

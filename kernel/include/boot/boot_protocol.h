@@ -8,7 +8,7 @@
 #include <stdint.h>
 
 #define WELOVEC_BOOTINFO_MAGIC UINT64_C(0x57454C4F56454249)
-#define WELOVEC_BOOTINFO_VERSION 1u
+#define WELOVEC_BOOTINFO_VERSION 2u
 #define WELOVEC_BOOTINFO_MAX_MODULES 8u
 #define WELOVEC_BOOTINFO_MAX_SEGMENTS 32u
 #define WELOVEC_BOOTINFO_MAX_STORAGE 64u
@@ -29,7 +29,14 @@ enum {
     WELOVEC_BOOT_FLAG_PAGING_ENABLED = 1u << 7,
     WELOVEC_BOOT_FLAG_INTERRUPTS_DISABLED = 1u << 8,
     WELOVEC_BOOT_FLAG_GDT_READY = 1u << 9,
-    WELOVEC_BOOT_FLAG_IDT_READY = 1u << 10
+    WELOVEC_BOOT_FLAG_IDT_READY = 1u << 10,
+    WELOVEC_BOOT_FLAG_DISPLAY_PCI_VALID = 1u << 11
+};
+
+enum {
+    WELOVEC_PCI_RESOURCE_MEMORY = 0u,
+    WELOVEC_PCI_RESOURCE_IO = 1u,
+    WELOVEC_PCI_RESOURCE_VALID = 1u << 0
 };
 
 enum {
@@ -61,7 +68,7 @@ enum {
     WELOVEC_EFI_UNACCEPTED_MEMORY = 15
 };
 
-/* Prefix layout shared with EFI_MEMORY_DESCRIPTOR; later UEFI versions may append fields. */
+// Prefix layout shared with EFI_MEMORY_DESCRIPTOR; later UEFI versions may append fields.
 typedef struct {
     uint32_t type;
     uint32_t pad;
@@ -80,6 +87,24 @@ typedef struct {
     uint32_t pixel_format;
     uint32_t pixel_masks[4];
 } WelovecFramebuffer;
+
+typedef struct {
+    uint64_t base;
+    uint64_t size;
+    uint32_t type;
+    uint32_t flags;
+} WelovecPciBarResource;
+
+typedef struct {
+    uint16_t segment;
+    uint8_t bus;
+    uint8_t slot;
+    uint8_t function;
+    uint8_t valid;
+    uint8_t bar_count;
+    uint8_t reserved;
+    WelovecPciBarResource bars[6];
+} WelovecDisplayPciInfo;
 
 typedef struct {
     uint64_t physical_address;
@@ -124,6 +149,7 @@ typedef struct WelovecBootInfo {
     uint32_t memory_map_descriptor_count;
 
     WelovecFramebuffer framebuffer;
+    WelovecDisplayPciInfo display_pci;
     uint64_t acpi_rsdp;
     uint64_t smbios_entry;
 

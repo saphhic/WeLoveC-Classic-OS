@@ -92,7 +92,8 @@ enum welovec_user_syscall_number {
     WELOVEC_SYS_FB_SURFACE_GENERATION = 81,
     WELOVEC_SYS_TERMINATE_WINDOWED_TREE = 82,
     WELOVEC_SYS_FB_FRAME_BEGIN = 83,
-    WELOVEC_SYS_FB_FRAME_END = 84
+    WELOVEC_SYS_FB_FRAME_END = 84,
+    WELOVEC_SYS_FS_LIST_RANGE = 85
 };
 
 static inline int64_t welovec_user_syscall0(uint64_t number) {

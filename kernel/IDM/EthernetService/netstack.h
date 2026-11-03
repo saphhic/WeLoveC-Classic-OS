@@ -9,9 +9,9 @@
 
 #include <stdint.h>
 
-// Snapshot de la configuracion/estadisticas IPv4 actuales, pensado para que
-// comandos de shell (o cualquier otro consumidor) lean el estado sin tener
-// que parsear la salida de las funciones netstack_debug_*.
+// Snapshot of the current IPv4 configuration and statistics, for shell
+// commands and other consumers that need state without parsing the output of
+// the netstack_debug_* functions.
 struct netstack_info {
     bool initialized;
     bool ipv4_configured;

@@ -72,12 +72,12 @@ static size_t append_number(char *destination, size_t capacity, size_t used,
 static void set_link_status(void) {
     char message[192];
     size_t used = 0;
-    copy_text(message, sizeof(message), "Enlace ");
+    copy_text(message, sizeof(message), "Link ");
     used = text_length(message);
     used = append_number(message, sizeof(message), used, g_selected_link + 1);
     if (used + 1 < sizeof(message)) message[used++] = '/';
     used = append_number(message, sizeof(message), used, g_link_count);
-    static const char open_text[] = " Enter abre: ";
+    static const char open_text[] = " Enter opens: ";
     for (size_t index = 0; open_text[index] && used + 1 < sizeof(message); ++index)
         message[used++] = open_text[index];
     message[used] = '\0';
@@ -261,7 +261,7 @@ static void draw_screen(void) {
         (void)welovec_fb_rect(0, (int32_t)height - 18, (int32_t)width, 18,
                               welovec_fb_rgb(35, 46, 63));
         (void)welovec_fb_text(8, (int32_t)height - 17,
-                              "u URL  r recargar  [] enlaces/Enter abrir  h/f historial  j/k  q salir",
+                              "u URL  r reload  [] links/Enter open  h/f history  j/k  q quit",
                               welovec_fb_rgb(190, 197, 210));
     }
 }
@@ -275,12 +275,12 @@ static int load_address(const char *address_text, int add_to_history) {
     struct welovec_http_response response;
     size_t address_length = text_length(address_text);
     if (!address_length) {
-        set_status("Escribe una dirección HTTPS o HTTP con u.");
+        set_status("Enter an HTTPS or HTTP address with u.");
         draw_screen();
         return 0;
     }
     if (address_length >= sizeof(requested)) {
-        set_status("La dirección supera el límite de longitud.");
+        set_status("The address exceeds the maximum length.");
         draw_screen();
         return 0;
     }
@@ -294,7 +294,7 @@ static int load_address(const char *address_text, int add_to_history) {
                address_length + 1);
     }
 
-    set_status("Cargando página...");
+    set_status("Loading page...");
     draw_screen();
     int tls_error = 0;
     const int result = welovec_http_get(requested, g_response_body,
@@ -303,7 +303,7 @@ static int load_address(const char *address_text, int add_to_history) {
         if (result == WELOVEC_HTTP_TLS_ERROR) {
             const char *description = welovec_tls_error_description(tls_error);
             if (description) copy_text(g_status, sizeof(g_status), description);
-            else set_status("TLS no pudo validar el certificado. No se cambió a HTTP.");
+            else set_status("TLS could not validate the certificate. HTTP fallback was not attempted.");
         } else {
             copy_text(g_status, sizeof(g_status),
                       welovec_http_error_string(result));
@@ -325,7 +325,7 @@ static int load_address(const char *address_text, int add_to_history) {
                                            &g_link_count, &html_parse_error);
         if (html_parse_error) {
             static const char parser_message[] =
-                "No se pudo analizar el documento HTML.";
+                "Could not parse the HTML document.";
             copy_text(g_page_text, BROWSER_BODY_CAPACITY + 1u,
                       parser_message);
             g_page_size = text_length(g_page_text);
@@ -347,11 +347,11 @@ static int load_address(const char *address_text, int add_to_history) {
     status_line[7] = (char)('0' + code % 10u);
     status_line[8] = ' ';
     const char *type = response.content_type[0]
-        ? response.content_type : "contenido";
+        ? response.content_type : "content";
     copy_text(status_line + 9, sizeof(status_line) - 9, type);
     if (starts_with_ci(response.final_url, "http://")) {
         const size_t status_length = text_length(status_line);
-        static const char insecure_note[] = " (sin cifrar)";
+        static const char insecure_note[] = " (unencrypted)";
         if (status_length + sizeof(insecure_note) <= sizeof(status_line))
             memcpy(status_line + status_length, insecure_note,
                    sizeof(insecure_note));
@@ -364,7 +364,7 @@ static int load_address(const char *address_text, int add_to_history) {
 static void navigate_history(int direction) {
     if (direction < 0) {
         if (!g_history_count || !g_history_index) {
-            set_status("No hay una página anterior en el historial.");
+            set_status("There is no previous page in the history.");
             draw_screen();
             return;
         }
@@ -372,7 +372,7 @@ static void navigate_history(int direction) {
         if (load_address(g_history[target], 0)) g_history_index = target;
     } else {
         if (!g_history_count || g_history_index + 1 >= g_history_count) {
-            set_status("No hay una página siguiente en el historial.");
+            set_status("There is no next page in the history.");
             draw_screen();
             return;
         }
@@ -383,7 +383,7 @@ static void navigate_history(int direction) {
 
 static void open_selected_link(void) {
     if (!g_link_count || g_selected_link >= g_link_count) {
-        set_status("Esta página no tiene enlaces HTTP o HTTPS utilizables.");
+        set_status("This page has no usable HTTP or HTTPS links.");
         draw_screen();
         return;
     }
@@ -392,7 +392,7 @@ static void open_selected_link(void) {
 
 static void select_link(int direction) {
     if (!g_link_count) {
-        set_status("Esta página no tiene enlaces HTTP o HTTPS utilizables.");
+        set_status("This page has no usable HTTP or HTTPS links.");
         draw_screen();
         return;
     }
@@ -408,13 +408,13 @@ static void begin_address_edit(void) {
     copy_text(g_edit, sizeof(g_edit), g_url);
     g_edit_cursor = text_length(g_edit);
     g_editing = 1;
-    set_status("Escribe la dirección y pulsa Enter; Escape cancela.");
+    set_status("Enter the address and press Enter; Escape cancels.");
     draw_screen();
 }
 
 static void cancel_address_edit(void) {
     g_editing = 0;
-    set_status("Navegación cancelada.");
+    set_status("Navigation cancelled.");
     draw_screen();
 }
 
@@ -445,7 +445,7 @@ static void scroll_by(int32_t amount) {
 static void handle_navigation_key(char key) {
     struct welovec_fb_info info;
     if (key == 'q') {
-        set_status("Navegador finalizado; cierra esta ventana con X.");
+        set_status("Browser exited; close this window with X.");
         draw_screen();
         welovec_exit(0);
     } else if (key == 'u') {
@@ -545,7 +545,7 @@ void userland_main(uint64_t argc, char **argv) {
     g_response_body = (uint8_t *)malloc(BROWSER_BODY_CAPACITY);
     g_page_text = (char *)malloc(BROWSER_BODY_CAPACITY + 1u);
     if (!g_response_body || !g_page_text) {
-        set_status("No hay memoria para abrir el navegador.");
+        set_status("Not enough memory to open the browser.");
         draw_screen();
         welovec_exit(1);
     }
@@ -568,7 +568,7 @@ void userland_main(uint64_t argc, char **argv) {
     for (;;) {
         const int64_t count = welovec_input_read(input, sizeof(input));
         if (count < 0) {
-            set_status("No se pudo leer el teclado.");
+            set_status("Could not read keyboard input.");
             draw_screen();
             (void)welovec_sleep(1);
             continue;

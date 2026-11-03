@@ -120,7 +120,11 @@ static void open_entry(struct window *w) {
         refresh(s);
         return;
     }
-    (void)wm_open(&app_editor, path);
+    static const char *const editor_argv[] = {
+        "/userspace/bin/editor/editor.elf", 0
+    };
+    const char *arguments[] = {editor_argv[0], path};
+    (void)desk_run(editor_argv[0], 2, arguments, 1);
 }
 
 static void go_up(struct window *w) {

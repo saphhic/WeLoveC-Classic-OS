@@ -717,6 +717,12 @@ when it restarts the shell after `exit`.
 Programs include headers from `kernel/include/user/`. Syscalls return a result
 or a negative errno. The framebuffer, keyboard, IPv4/TCP, filesystem, process,
 and account APIs are described in [SYSCALLS.md](userland/SYSCALLS.md).
+The user ELF startup passes `argc` and `argv` to `userland_main`, runs
+preinitializers and C/C++ constructors before it, and runs finalizers if the
+program returns. The linker keeps exception tables in the executable. These
+ABI pieces prepare for C++ programs; the userland C++ standard library and
+exception runtime are not provided yet. See [CLANG_COMPILER.md](CLANG_COMPILER.md)
+for the compiler port status.
 
 ### Shell layout
 
@@ -728,8 +734,9 @@ compiles each source in `shell1.2/external/` as its own ELF under
 `/userspace/bin/shell/bin/`. `help` reads the command descriptions at runtime
 and shows each `description=`.
 
-The built-in `help`, `apps`, `reboot`, and `shutdown` are handled by the shell. `apps`
-lists installed ELF files; shell command ELFs live under
+The built-in `help`, `apps`, `reboot`, and `shutdown` are handled by the shell.
+`apps` recursively lists ELF files throughout the VFS, paging directories with
+`FS_LIST_RANGE`; it prints each file's absolute path. Shell command ELFs live under
 `/userspace/bin/shell/bin/`, and the shell starts in the separate, initially
 empty `/userland/tmp` directory. Other
 commands are config entries: filesystem tools (`ls`, `cat`, `mkdir`, `rm`,
@@ -848,8 +855,13 @@ browser.
 
 *Source: `userland/bin/desktop/README.md`; an identical copy also existed in `userland/bin/desktop_addon/userland/bin/desktop/README.md`.*
 
-A single ELF (`/userspace/bin/desktop/desktop.elf`) sharing the same format as `userland/bin/shell`:
-the root Makefile discovers it automatically (each directory in `userland/bin` is a program).
+A single desktop ELF (`/userspace/bin/desktop/desktop.elf`) shares the same
+format as `userland/bin/shell`; the root Makefile discovers it automatically.
+Built-in tools are separate ELFs under `/userspace/bin/<name>/<name>.elf`:
+Calculator, Code, Editor, Files, Geometry, System Info, and Task Manager each
+run as a user process. Code is a compact source editor with a file explorer,
+line numbers, basic C/C++ syntax colors, and open/save controls. The desktop
+owns the window chrome and composites each process-owned drawing surface.
 
 ### Usage
 - From the shell: `desktop` (command `shell/commands/desktop.conf`)
@@ -859,18 +871,24 @@ the root Makefile discovers it automatically (each directory in `userland/bin` i
 ### Features
 Moveable and resizable windows from the bottom-right corner, minimize,
 maximize, close, focus, and Tab to cycle. The shell and other ELFs run inside
-windows; keyboard and mouse input follow the focused window. The Start menu displays
-horizontal icons, Files uses icons by file type (`.elf`, `.conf`, and others), and Programs
-automatically discovers `/userspace/bin/<x>/<x>.elf`. Includes a taskbar with UTC clock,
-Files, Editor, Task manager, System info, Calculator, Run..., restart, and shutdown.
+windows; keyboard and mouse input follow the focused window. The Start menu
+displays horizontal icons. Files uses icons by file type (`.elf`, `.conf`, and
+others), and Programs lists up to six applications at
+`/userspace/bin/<x>/<x>.elf`.
+The taskbar includes a UTC clock. The menu launches Terminal, Files, Editor,
+Code, Task Manager, System Info, Calculator, Geometry, Run..., restart, and
+shutdown. Code opens as `/userspace/bin/code/code.elf`; see
+[`CODE_EDITOR.md`](CODE_EDITOR.md) for its guide.
 
 ### Memory
 No back buffer for the desktop: preserves state and redraws only damaged regions.
-Program surfaces are allocated when opening ELFs and share an 8 MiB limit across
-all windows; they are freed upon closing. Large editor buffers use `mmap` and
-are freed when the window closes.
+Program surfaces are allocated when opening ELFs and share an 8 MiB limit
+across all windows; they are freed upon closing. Each built-in tool is its own
+ELF and runs in one of these surfaces. Large editor buffers use `mmap` and are
+freed when the window closes.
 
 ### Current Kernel Limitations
-- `FS_LIST` lacks offset support: directories with >32 entries display only the first 32.
+- `FS_LIST` returns the first 32 entries. `FS_LIST_RANGE` adds offset paging;
+  the Files window still displays its first 32 entries per directory.
 - No Ctrl+letter, Home/End, or Delete key handling in the keyboard layer: the editor saves using on-screen buttons.
 - Fixed 16x16 text (FB_TEXT); no framebuffer reading capabilities.

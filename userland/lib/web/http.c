@@ -570,24 +570,24 @@ int welovec_http_get(const char *url_text, uint8_t *body,
 
 const char *welovec_http_error_string(int error) {
     switch (error) {
-    case WELOVEC_HTTP_INVALID_URL: return "URL no válida o no compatible";
-    case WELOVEC_HTTP_NETWORK_ERROR: return "no se pudo conectar o leer la red";
-    case WELOVEC_HTTP_TLS_ERROR: return "falló TLS o la validación del certificado";
-    case WELOVEC_HTTP_BAD_RESPONSE: return "respuesta HTTP mal formada";
-    case WELOVEC_HTTP_BODY_TOO_LARGE: return "la página supera el límite de memoria";
-    case WELOVEC_HTTP_UNSUPPORTED_RESPONSE: return "respuesta sin longitud o codificación compatible";
-    case WELOVEC_HTTP_REDIRECT_ERROR: return "redirección ausente, excesiva o insegura";
-    case WELOVEC_HTTP_TIMEOUT: return "tiempo de espera de red agotado";
-    case WELOVEC_HTTP_DNS_ERROR: return "DNS no pudo resolver el nombre del servidor";
-    case WELOVEC_HTTP_CONNECT_ERROR: return "no se pudo abrir una conexión TCP al servidor";
-    case WELOVEC_HTTP_SEND_ERROR: return "la conexión TCP falló al enviar la solicitud";
-    case WELOVEC_HTTP_RECEIVE_ERROR: return "la conexión TCP falló al recibir la respuesta";
-    case WELOVEC_HTTP_CONNECT_TIMEOUT: return "el servidor no respondió al inicio de la conexión TCP";
-    case WELOVEC_HTTP_CONNECT_REFUSED: return "el servidor rechazó la conexión TCP; comprueba el puerto y el protocolo";
-    case WELOVEC_HTTP_CONNECT_NETWORK_ERROR: return "no hay ruta o respuesta de red hacia el servidor";
-    case WELOVEC_HTTP_CONNECT_ENTROPY_ERROR: return "el kernel no tiene una fuente de aleatoriedad segura para TCP";
-    case WELOVEC_HTTP_CONNECT_RESOURCE_ERROR: return "el kernel no pudo reservar recursos para la conexión TCP";
-    case WELOVEC_HTTP_CONNECT_SEND_ERROR: return "el kernel no pudo enviar el inicio de la conexión TCP";
-    default: return "error HTTP desconocido";
+    case WELOVEC_HTTP_INVALID_URL: return "invalid or unsupported URL";
+    case WELOVEC_HTTP_NETWORK_ERROR: return "could not connect to or read from the network";
+    case WELOVEC_HTTP_TLS_ERROR: return "TLS or certificate validation failed";
+    case WELOVEC_HTTP_BAD_RESPONSE: return "malformed HTTP response";
+    case WELOVEC_HTTP_BODY_TOO_LARGE: return "page exceeds the memory limit";
+    case WELOVEC_HTTP_UNSUPPORTED_RESPONSE: return "response has unsupported length or encoding";
+    case WELOVEC_HTTP_REDIRECT_ERROR: return "redirect is missing, excessive, or unsafe";
+    case WELOVEC_HTTP_TIMEOUT: return "network request timed out";
+    case WELOVEC_HTTP_DNS_ERROR: return "DNS could not resolve the server name";
+    case WELOVEC_HTTP_CONNECT_ERROR: return "could not open a TCP connection to the server";
+    case WELOVEC_HTTP_SEND_ERROR: return "TCP connection failed while sending the request";
+    case WELOVEC_HTTP_RECEIVE_ERROR: return "TCP connection failed while receiving the response";
+    case WELOVEC_HTTP_CONNECT_TIMEOUT: return "server did not respond to the start of the TCP connection";
+    case WELOVEC_HTTP_CONNECT_REFUSED: return "server refused the TCP connection; check the port and protocol";
+    case WELOVEC_HTTP_CONNECT_NETWORK_ERROR: return "no route or network response from the server";
+    case WELOVEC_HTTP_CONNECT_ENTROPY_ERROR: return "kernel has no secure random source for TCP";
+    case WELOVEC_HTTP_CONNECT_RESOURCE_ERROR: return "kernel could not allocate resources for the TCP connection";
+    case WELOVEC_HTTP_CONNECT_SEND_ERROR: return "kernel could not send the TCP connection handshake";
+    default: return "unknown HTTP error";
     }
 }
