@@ -2,6 +2,8 @@
   <img src="dev_info/media/80689-removebg-preview.png" alt="WLC Classic" width="300" />
 </div>
 
+<p align="center"><strong>WeLoveC a operating system from zero, project since late 2024</strong></p>
+
 # WeLoveC Classic — unified documentation
 
 Written by [@saphhic](https://github.com/saphhic)  \
