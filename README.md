@@ -5,9 +5,9 @@
 <p align="center"><strong>WeLoveC a operating system from zero, project since late 2024</strong></p>
 
 <p align="left">
-  <img src="dev_info/media/Screenshot_20261031-010933~2.jpg" width="170" hspace="10" />
-  <img src="dev_info/media/Screenshot_20261031-011216~2.jpg" width="170" hspace="10" />
-  <img src="dev_info/media/Screenshot_20261031-010936~2.jpg" width="170" hspace="10" />
+  <img src="dev_info/media/Screenshot_20261031-010933~2.jpg" width="250" hspace="10" />
+  <img src="dev_info/media/Screenshot_20261031-011216~2.jpg" width="250" hspace="10" />
+  <img src="dev_info/media/Screenshot_20261031-010936~2.jpg" width="250" hspace="10" />
 </p>
 
 # WeLoveC Classic — unified documentation
