@@ -13,7 +13,7 @@
 </p>
 
 <p align="center">
-  <i>A modern operating system, built from the ground up.</i>
+  <i>A operating system, built from the ground up.</i>
 </p>
 
 ---
