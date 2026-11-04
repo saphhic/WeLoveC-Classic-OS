@@ -135,9 +135,11 @@ This is a long-term project, and its architecture will continue to evolve as new
 
 ## Documentation
 
-Detailed technical documentation is available throughout the repository.
+Detailed technical documentation is available in `` 
+                                                  /dev_info.
+                                                  ``
 
-For more information, explore the README files located inside the individual components.
+For more information, explore the [Official Documentation](https://github.com/saphhic/WeLoveC-Classic-OS/blob/main/dev_info/welovec_classic_documentation.md).
 
 Topics include:
 
@@ -155,7 +157,7 @@ Topics include:
 
 WeLoveC Classic is built around a simple idea:
 
-**Understand the machine. Build the system. Own the entire stack.**
+**Build your dream digital space.**
 
 The goal is not simply to make another operating system, but to explore how software interacts with hardware, how kernels manage resources, and how independent system components work together.
 
@@ -165,7 +167,7 @@ Every subsystem is an opportunity to learn, experiment and build something from 
 
 **Developed by [@saphhic](https://github.com/saphhic)**
 
-An independent operating system development project.
+An independent operating system development project since 2024.
 
 GitHub: [github.com/saphhic](https://github.com/saphhic)
 
